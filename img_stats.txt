@@ -1,0 +1,5 @@
+# Image statistics for train images (without validation images)
+# Channel means
+[109.71016648 126.66517104  79.94219092]
+# Channel standard deviations
+[56.66273516 57.88265628 52.18893758]
