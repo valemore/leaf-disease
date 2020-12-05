@@ -122,7 +122,7 @@ logging_dir = Path("./runs")
 
 n_epochs = 10
 batch_size = 4
-learning_rate = 3e-4
+learning_rate = 3e-5
 
 logging_steps = 500
 save_checkpoints = True
