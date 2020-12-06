@@ -20,7 +20,8 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from torch.utils.tensorboard import SummaryWriter
 
-import timm
+#import timm
+from efficientnet_pytorch import EfficientNet
 
 # Transforms with normalizations for imagenet
 data_transforms = {
@@ -128,9 +129,8 @@ n_epochs = 5
 batch_size = 4
 learning_rate = 3e-4
 l2_weight_decay = 0.0
-timm_args ={
-    "model_name": 'efficientnet_b0',
-    "pretrained": True,
+efficientnet_args ={
+    "model_name": 'efficientnet-b7',
     "num_classes": 5
 }
 
@@ -146,7 +146,8 @@ val_dataloader = DataLoader(val_dset, batch_size=batch_size, shuffle=False, num_
 
 device = torch.device("cuda")
 
-model = timm.create_model(**timm_args)
+model = model = EfficientNet.from_pretrained(**efficientnet_args)
+#model = timm.create_model(**timm_args)
 
 criterion = nn.CrossEntropyLoss()
 optimizer = Adam(model.parameters(), lr=learning_rate, weight_decay=l2_weight_decay)
@@ -165,7 +166,7 @@ hyperparameters_dict = {
     "batch_size": batch_size,
     "learning_rate": learning_rate,
     "l2_weight_decay": l2_weight_decay,
-    "timm_args": timm_args
+    "efficientnet_args": efficientnet_args
 }
 with open(output_dir / "hyperparamters_dict.json", "w") as f:
     json.dump(hyperparameters_dict, f)
