@@ -38,3 +38,11 @@ Where is the dropout?
 Pre-train on similar problem/dataset?
 
 # Cross-Validation, use whole training dataset
+
+# Different learning rates for different parts / freezing-unfreezing strategy?
+
+# Scheme for cropping at train / TTA
+Divide each image into 6 200x200 patches, rescale them to ImageNet size, do the other augmentations
+At train: Feed all patches (or only gree ones?)
+At test time: Only feed in "green" patches, have a vote among all, have a vote among only the disease classes
+(can play with thresholds here, e.g. minimum number of diseased patches required)

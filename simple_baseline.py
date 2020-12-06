@@ -3,6 +3,10 @@ import time
 from datetime import datetime
 from tqdm import tqdm
 #from docopt import docopt
+import json
+import subprocess
+import shutil
+import math
 
 from skimage import io
 import numpy as np
@@ -24,14 +28,12 @@ data_transforms = {
         transforms.ToTensor(),
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
-        transforms.Normalize([0.0, 0.0, 0.0], [255.0, 255.0, 255.0]),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ]),
     'val': transforms.Compose([
         transforms.ToTensor(),
         transforms.Resize(256),
         transforms.CenterCrop(224),
-        transforms.Normalize([0.0, 0.0, 0.0], [255.0, 255.0, 255.0]),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ]),
 }
@@ -117,12 +119,21 @@ def validate_model(model, global_step, training_start_time, tb_writer):
     tb_writer.add_scalar("acc/val", val_acc, global_step)
 
 
-output_dir = Path("./output/")
+save_dir = Path("./outputs/")
+save_dir.mkdir(exist_ok=True)
 logging_dir = Path("./runs")
+logging_dir.mkdir(exist_ok=True)
 
-n_epochs = 10
+n_epochs = 5
 batch_size = 4
-learning_rate = 3e-5
+learning_rate = 3e-4
+l2_weight_decay = 0.0
+timm_args ={
+    "model_name": 'efficientnet_b0',
+    "pretrained": True,
+    "num_classes": 5
+}
+
 
 logging_steps = 500
 save_checkpoints = True
@@ -135,22 +146,39 @@ val_dataloader = DataLoader(val_dset, batch_size=batch_size, shuffle=False, num_
 
 device = torch.device("cuda")
 
-model = timm.create_model('efficientnet_b0', pretrained=True, num_classes=5)
+model = timm.create_model(**timm_args)
 
 criterion = nn.CrossEntropyLoss()
-optimizer = Adam(model.parameters(), lr=learning_rate)
+optimizer = Adam(model.parameters(), lr=learning_rate, weight_decay=l2_weight_decay)
 lr_policy = "onecycle"
-scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_dset), epochs=n_epochs)
-
+scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=math.ceil(len(train_dset) / batch_size), epochs=n_epochs)
 
 # Output and loggind directories
+model_prefix = f"{datetime.now().strftime('%b%d_%H-%M-%S')}"
+output_dir = save_dir / model_prefix
 output_dir.mkdir(exist_ok=True)
 (output_dir / "checkpoints").mkdir(exist_ok=True)
-logging_dir.mkdir(exist_ok=True)
 
 # Set up logging
-tb_writer_dir = f"{datetime.now().strftime('%b%d_%H-%M-%S')}"
-tb_writer = SummaryWriter(log_dir=logging_dir / tb_writer_dir)
+hyperparameters_dict = {
+    "n_epochs": n_epochs,
+    "batch_size": batch_size,
+    "learning_rate": learning_rate,
+    "l2_weight_decay": l2_weight_decay,
+    "timm_args": timm_args
+}
+with open(output_dir / "hyperparamters_dict.json", "w") as f:
+    json.dump(hyperparameters_dict, f)
+
+script_path = Path(__file__)
+shutil.copy(Path(__file__), output_dir / script_path.name)
+
+git_cmd_result = subprocess.run(['git', 'rev-parse', 'HEAD'], stdout=subprocess.PIPE)
+
+with open(output_dir / "commit.txt", "w") as f:
+    f.write(git_cmd_result.stdout.decode("utf-8"))
+
+tb_writer = SummaryWriter(log_dir=logging_dir / model_prefix)
 
 running_loss = 0.0
 running_i = 0

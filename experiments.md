@@ -7,4 +7,6 @@ batch_size = 4
 learning_rate = 3e-5
 
 # Nov22_18
-3e-4
+commit a4b82e765d0135946946e9320b9aee289e8b1fdd
+
+learning _rate = 3e-4
