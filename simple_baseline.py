@@ -27,8 +27,10 @@ from efficientnet_pytorch import EfficientNet
 data_transforms = {
     'train': transforms.Compose([
         transforms.ToTensor(),
+        #transforms.RandomRotation(20),
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
+        #transforms.ColorJitter(0.1, 0.1, 0.1, 0.1),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ]),
     'val': transforms.Compose([
@@ -39,6 +41,9 @@ data_transforms = {
     ]),
 }
 
+# The bare minimum
+# transforms.Compose([transforms.Resize(224), transforms.ToTensor(),
+#     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),])
 
 class LeafDataset(Dataset):
     """Cassava Leaf Disease Classification dataset."""
