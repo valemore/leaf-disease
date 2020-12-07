@@ -46,3 +46,23 @@ Divide each image into 6 200x200 patches, rescale them to ImageNet size, do the 
 At train: Feed all patches (or only gree ones?)
 At test time: Only feed in "green" patches, have a vote among all, have a vote among only the disease classes
 (can play with thresholds here, e.g. minimum number of diseased patches required)
+
+# Vision Transformer
+
+# Work on smaller image patches?
+Information is all there on a single leaf.
+Divide in patches, train only on green ones?
+Test time: Have a vote or minimum threshold?
+
+Could work well with ViT?
+
+Easy: Random crop 128x128, or smaller, or bigger
+
+# Investigate RandomResizedCrop, RandomCrop
+
+# Write own Dataloader, transformations to implement test time logic?
+
+# More transforms
+You could also yse CenterCrop 110 for your test dataset.
+
+Also FiveCrop 228 can give you additional performance gains, if runtime (averaging over the 5 crops) is not a major issue.

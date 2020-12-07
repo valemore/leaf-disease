@@ -8,7 +8,6 @@ import subprocess
 import shutil
 import math
 
-from skimage import io
 import numpy as np
 import pandas as pd
 
@@ -23,57 +22,29 @@ from torch.utils.tensorboard import SummaryWriter
 #import timm
 from efficientnet_pytorch import EfficientNet
 
+from leaf.dta import LeafDataset, GetPatches, TransformPatches, RandomGreen
+
 # Transforms with normalizations for imagenet
 data_transforms = {
     'train': transforms.Compose([
         transforms.ToTensor(),
-        #transforms.RandomRotation(20),
-        transforms.RandomResizedCrop(224),
-        transforms.RandomHorizontalFlip(),
-        #transforms.ColorJitter(0.1, 0.1, 0.1, 0.1),
+        RandomGreen(64, 64),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ]),
     'val': transforms.Compose([
         transforms.ToTensor(),
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        transforms.Resize((768, 576)),
+        GetPatches(786, 576, 12, 9),
+        TransformPatches([
+            transforms.Resize(224),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        ])
     ]),
 }
 
 # The bare minimum
 # transforms.Compose([transforms.Resize(224), transforms.ToTensor(),
 #     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),])
-
-class LeafDataset(Dataset):
-    """Cassava Leaf Disease Classification dataset."""
-
-    def __init__(self, img_dir, labels_csv=None, transform=None):
-        self.img_dir = img_dir if isinstance(img_dir, Path) else Path(img_dir)
-        self.transform = transform
-        if labels_csv:
-            df = pd.read_csv(labels_csv)
-            self.fnames = df["image_id"].values
-            self.labels = df["label"].values
-        else:
-            self.fnames = np.array([img.name for img in img_dir.glob("*.jpg")])
-            self.labels = None
-        self.dataset_len = len(self.fnames)
-
-    def __len__(self):
-        return self.dataset_len
-
-    def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-        img = io.imread(self.img_dir / self.fnames[idx])
-        if self.transform:
-            img = self.transform(img)
-        if self.labels is not None:
-            label = self.labels[idx]
-        else:
-            label = None
-        return img, label
 
 
 def save_model(model, optimizer, epoch, global_step, loss, fname):
@@ -125,15 +96,17 @@ def validate_model(model, global_step, training_start_time, tb_writer):
     tb_writer.add_scalar("acc/val", val_acc, global_step)
 
 
-save_dir = Path("./outputs/")
+save_dir = Path("/mnt/hdd/leaf-disease-outputs")
 save_dir.mkdir(exist_ok=True)
 logging_dir = Path("./runs")
 logging_dir.mkdir(exist_ok=True)
 
 n_epochs = 5
 batch_size = 4
-learning_rate = 3e-4
-l2_weight_decay = 0.0
+learning_rate = 1e-6
+final_layers_lr = 1e-4
+weight_decay = 0.0
+final_layers_wd = 0.0
 efficientnet_args ={
     "model_name": 'efficientnet-b7',
     "num_classes": 5
@@ -154,8 +127,42 @@ device = torch.device("cuda")
 model = model = EfficientNet.from_pretrained(**efficientnet_args)
 #model = timm.create_model(**timm_args)
 
+# Allow for different learning rates/regularization strenghts for final layers
+final_layers = ['_fc.weight',
+                '_fc.bias']
+
+if final_layers_lr == -1.0:
+    final_layers_lr = learning_rate
+if final_layers_wd == -1.0:
+    final_layers_wd = weight_decay
+
+final_layer_params = [(n, p) for n, p in model.named_parameters() if n in final_layers]
+non_final_layer_params = [(n, p) for n, p in model.named_parameters() if n not in final_layers]
+
+no_decay = ['bias', 'LayerNorm.weight']
+final_layer_decaying_params = [p for n, p in final_layer_params if not any(nd in n for nd in no_decay)]
+final_layer_nondecaying_params = [p for n, p in final_layer_params if any(nd in n for nd in no_decay)]
+
+non_final_layer_decaying_params = [p for n, p in non_final_layer_params if not any(nd in n for nd in no_decay)]
+non_final_layer_nondecaying_params = [p for n, p in non_final_layer_params if any(nd in n for nd in no_decay)]
+
+optimizer_grouped_parameters = [
+        {'params': final_layer_decaying_params,
+            'lr':final_layers_lr,
+            'weight_decay':final_layers_wd},
+        {'params': final_layer_nondecaying_params,
+            'lr':final_layers_lr,
+            'weight_decay':0.0},
+        {'params': non_final_layer_decaying_params,
+            'lr':learning_rate,
+            'weight_decay':weight_decay},
+        {'params': non_final_layer_nondecaying_params,
+            'lr':learning_rate,
+            'weight_decay':0.0},
+        ]
+
 criterion = nn.CrossEntropyLoss()
-optimizer = Adam(model.parameters(), lr=learning_rate, weight_decay=l2_weight_decay)
+optimizer = Adam(optimizer_grouped_parameters, lr=learning_rate, weight_decay=weight_decay)
 lr_policy = "onecycle"
 scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=math.ceil(len(train_dset) / batch_size), epochs=n_epochs)
 
@@ -165,12 +172,13 @@ output_dir = save_dir / model_prefix
 output_dir.mkdir(exist_ok=True)
 (output_dir / "checkpoints").mkdir(exist_ok=True)
 
+
 # Set up logging
 hyperparameters_dict = {
     "n_epochs": n_epochs,
     "batch_size": batch_size,
     "learning_rate": learning_rate,
-    "l2_weight_decay": l2_weight_decay,
+    "l2_weight_decay": weight_decay,
     "efficientnet_args": efficientnet_args
 }
 with open(output_dir / "hyperparamters_dict.json", "w") as f:
