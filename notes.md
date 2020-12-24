@@ -66,3 +66,8 @@ Easy: Random crop 128x128, or smaller, or bigger
 You could also yse CenterCrop 110 for your test dataset.
 
 Also FiveCrop 228 can give you additional performance gains, if runtime (averaging over the 5 crops) is not a major issue.
+
+# Kati points
+Double check green test, maybe check color statistics for different classes.
+Only some leaves might show the disease.
+Diseases can only be told apart by using different parts.

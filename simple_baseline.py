@@ -15,14 +15,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Adam
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from torchvision import transforms
 from torch.utils.tensorboard import SummaryWriter
 
 #import timm
 from efficientnet_pytorch import EfficientNet
 
-from leaf.dta import LeafDataset, GetPatches, TransformPatches, RandomGreen
+from leaf.dta import LeafDataset, LeafIterableDataset, GetPatches, TransformPatches, RandomGreen, LeafDataLoader
 
 # Transforms with normalizations for imagenet
 data_transforms = {
@@ -34,9 +34,8 @@ data_transforms = {
     'val': transforms.Compose([
         transforms.ToTensor(),
         transforms.Resize((768, 576)),
-        GetPatches(786, 576, 12, 9),
+        GetPatches(768, 576, 12, 9),
         TransformPatches([
-            transforms.Resize(224),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ])
     ]),
@@ -74,8 +73,8 @@ def log_training(running_loss, training_acc, logging_steps, global_step, learnin
 def validate_model(model, global_step, training_start_time, tb_writer):
     """Runs model on validation set and writes results using tensorboard"""
     model.eval()
-    logits_all = torch.zeros((len(val_dset), 5), dtype=float)
-    labels_all = torch.zeros(len(val_dset), dtype=int)
+    logits_all = torch.zeros((len(val_dataloader), 5), dtype=float)
+    labels_all = torch.zeros(len(val_dataloader), dtype=int)
     i = 0
     for imgs, labels in tqdm(val_dataloader):
         bs = len(imgs)
@@ -96,160 +95,161 @@ def validate_model(model, global_step, training_start_time, tb_writer):
     tb_writer.add_scalar("acc/val", val_acc, global_step)
 
 
-save_dir = Path("/mnt/hdd/leaf-disease-outputs")
-save_dir.mkdir(exist_ok=True)
-logging_dir = Path("./runs")
-logging_dir.mkdir(exist_ok=True)
+if __name__ == "__main__":
+    save_dir = Path("/Users/valerio.morelli/v/leaf-disease-outputs")
+    save_dir.mkdir(exist_ok=True)
+    logging_dir = Path("/Users/valerio.morelli/v/leaf-disease-runs")
+    logging_dir.mkdir(exist_ok=True)
 
-n_epochs = 5
-batch_size = 4
-learning_rate = 1e-6
-final_layers_lr = 1e-4
-weight_decay = 0.0
-final_layers_wd = 0.0
-efficientnet_args ={
-    "model_name": 'efficientnet-b7',
-    "num_classes": 5
-}
-
-
-logging_steps = 500
-save_checkpoints = True
-
-train_dset = LeafDataset("./data/train_images", "./data/train_images/labels.csv", transform=data_transforms["train"])
-val_dset = LeafDataset("./data/val_images", "./data/val_images/labels.csv", transform=data_transforms["val"])
-
-train_dataloader = DataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=4)
-val_dataloader = DataLoader(val_dset, batch_size=batch_size, shuffle=False, num_workers=4)
-
-device = torch.device("cuda")
-
-model = model = EfficientNet.from_pretrained(**efficientnet_args)
-#model = timm.create_model(**timm_args)
-
-# Allow for different learning rates/regularization strenghts for final layers
-final_layers = ['_fc.weight',
-                '_fc.bias']
-
-if final_layers_lr == -1.0:
-    final_layers_lr = learning_rate
-if final_layers_wd == -1.0:
-    final_layers_wd = weight_decay
-
-final_layer_params = [(n, p) for n, p in model.named_parameters() if n in final_layers]
-non_final_layer_params = [(n, p) for n, p in model.named_parameters() if n not in final_layers]
-
-no_decay = ['bias', 'LayerNorm.weight']
-final_layer_decaying_params = [p for n, p in final_layer_params if not any(nd in n for nd in no_decay)]
-final_layer_nondecaying_params = [p for n, p in final_layer_params if any(nd in n for nd in no_decay)]
-
-non_final_layer_decaying_params = [p for n, p in non_final_layer_params if not any(nd in n for nd in no_decay)]
-non_final_layer_nondecaying_params = [p for n, p in non_final_layer_params if any(nd in n for nd in no_decay)]
-
-optimizer_grouped_parameters = [
-        {'params': final_layer_decaying_params,
-            'lr':final_layers_lr,
-            'weight_decay':final_layers_wd},
-        {'params': final_layer_nondecaying_params,
-            'lr':final_layers_lr,
-            'weight_decay':0.0},
-        {'params': non_final_layer_decaying_params,
-            'lr':learning_rate,
-            'weight_decay':weight_decay},
-        {'params': non_final_layer_nondecaying_params,
-            'lr':learning_rate,
-            'weight_decay':0.0},
-        ]
-
-criterion = nn.CrossEntropyLoss()
-optimizer = Adam(optimizer_grouped_parameters, lr=learning_rate, weight_decay=weight_decay)
-lr_policy = "onecycle"
-scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=math.ceil(len(train_dset) / batch_size), epochs=n_epochs)
-
-# Output and loggind directories
-model_prefix = f"{datetime.now().strftime('%b%d_%H-%M-%S')}"
-output_dir = save_dir / model_prefix
-output_dir.mkdir(exist_ok=True)
-(output_dir / "checkpoints").mkdir(exist_ok=True)
+    n_epochs = 5
+    batch_size = 32
+    learning_rate = 1e-6
+    final_layers_lr = 1e-4
+    weight_decay = 0.0
+    final_layers_wd = 0.0
+    efficientnet_args ={
+        "model_name": 'efficientnet-b0',
+        "num_classes": 5
+    }
 
 
-# Set up logging
-hyperparameters_dict = {
-    "n_epochs": n_epochs,
-    "batch_size": batch_size,
-    "learning_rate": learning_rate,
-    "l2_weight_decay": weight_decay,
-    "efficientnet_args": efficientnet_args
-}
-with open(output_dir / "hyperparamters_dict.json", "w") as f:
-    json.dump(hyperparameters_dict, f)
+    logging_steps = 500
+    save_checkpoints = True
 
-script_path = Path(__file__)
-shutil.copy(Path(__file__), output_dir / script_path.name)
+    train_dset = LeafIterableDataset("./data/train_images", "./data/train_images/labels.csv", transform=data_transforms["train"])
+    val_dset = LeafIterableDataset("./data/val_images", "./data/val_images/labels.csv", transform=data_transforms["val"])
 
-git_cmd_result = subprocess.run(['git', 'rev-parse', 'HEAD'], stdout=subprocess.PIPE)
+    train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, num_workers=4)
+    val_dataloader = LeafDataLoader(val_dset, batch_size=batch_size, num_workers=4, max_samples_per_image=12 * 9)
 
-with open(output_dir / "commit.txt", "w") as f:
-    f.write(git_cmd_result.stdout.decode("utf-8"))
+    device = torch.device("cpu")
 
-tb_writer = SummaryWriter(log_dir=logging_dir / model_prefix)
+    model = EfficientNet.from_pretrained(**efficientnet_args)
+    #model = timm.create_model(**timm_args)
 
-running_loss = 0.0
-running_i = 0
-running_preds = np.zeros(logging_steps * batch_size, dtype=int)
-running_labels = np.zeros(logging_steps * batch_size, dtype=int)
+    # Allow for different learning rates/regularization strenghts for final layers
+    final_layers = ['_fc.weight',
+                    '_fc.bias']
+
+    if final_layers_lr == -1.0:
+        final_layers_lr = learning_rate
+    if final_layers_wd == -1.0:
+        final_layers_wd = weight_decay
+
+    final_layer_params = [(n, p) for n, p in model.named_parameters() if n in final_layers]
+    non_final_layer_params = [(n, p) for n, p in model.named_parameters() if n not in final_layers]
+
+    no_decay = ['bias', 'LayerNorm.weight']
+    final_layer_decaying_params = [p for n, p in final_layer_params if not any(nd in n for nd in no_decay)]
+    final_layer_nondecaying_params = [p for n, p in final_layer_params if any(nd in n for nd in no_decay)]
+
+    non_final_layer_decaying_params = [p for n, p in non_final_layer_params if not any(nd in n for nd in no_decay)]
+    non_final_layer_nondecaying_params = [p for n, p in non_final_layer_params if any(nd in n for nd in no_decay)]
+
+    optimizer_grouped_parameters = [
+            {'params': final_layer_decaying_params,
+                'lr':final_layers_lr,
+                'weight_decay':final_layers_wd},
+            {'params': final_layer_nondecaying_params,
+                'lr':final_layers_lr,
+                'weight_decay':0.0},
+            {'params': non_final_layer_decaying_params,
+                'lr':learning_rate,
+                'weight_decay':weight_decay},
+            {'params': non_final_layer_nondecaying_params,
+                'lr':learning_rate,
+                'weight_decay':0.0},
+            ]
+
+    criterion = nn.CrossEntropyLoss()
+    optimizer = Adam(optimizer_grouped_parameters, lr=learning_rate, weight_decay=weight_decay)
+    lr_policy = "onecycle"
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=math.ceil(len(train_dset) / batch_size), epochs=n_epochs)
+
+    # Output and loggind directories
+    model_prefix = f"{datetime.now().strftime('%b%d_%H-%M-%S')}"
+    output_dir = save_dir / model_prefix
+    output_dir.mkdir(exist_ok=True)
+    (output_dir / "checkpoints").mkdir(exist_ok=True)
 
 
-model.train()
-model = model.to(device)
-global_step = 1
-for epoch in range(n_epochs):
-    tic = time.time()
-    for imgs, labels in tqdm(train_dataloader):
-        model.train()
-        imgs = imgs.to(device)
-        labels = labels.to(device)
+    # Set up logging
+    hyperparameters_dict = {
+        "n_epochs": n_epochs,
+        "batch_size": batch_size,
+        "learning_rate": learning_rate,
+        "l2_weight_decay": weight_decay,
+        "efficientnet_args": efficientnet_args
+    }
+    with open(output_dir / "hyperparamters_dict.json", "w") as f:
+        json.dump(hyperparameters_dict, f)
 
-        optimizer.zero_grad()
+    script_path = Path(__file__)
+    shutil.copy(Path(__file__), output_dir / script_path.name)
 
-        logits = model.forward(imgs)
-        loss = criterion(logits, labels)
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
+    git_cmd_result = subprocess.run(['git', 'rev-parse', 'HEAD'], stdout=subprocess.PIPE)
 
-        # Metrics and logging
-        running_loss += loss.mean().item()
+    with open(output_dir / "commit.txt", "w") as f:
+        f.write(git_cmd_result.stdout.decode("utf-8"))
+
+    tb_writer = SummaryWriter(log_dir=logging_dir / model_prefix)
+
+    running_loss = 0.0
+    running_i = 0
+    running_preds = np.zeros(logging_steps * batch_size, dtype=int)
+    running_labels = np.zeros(logging_steps * batch_size, dtype=int)
+
+
+    model.train()
+    model = model.to(device)
+    global_step = 1
+    for epoch in range(n_epochs):
+        tic = time.time()
+        for imgs, labels in tqdm(train_dataloader):
+            model.train()
+            imgs = imgs.to(device)
+            labels = labels.to(device)
+
+            optimizer.zero_grad()
+
+            logits = model.forward(imgs)
+            loss = criterion(logits, labels)
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            # Metrics and logging
+            running_loss += loss.mean().item()
+            with torch.no_grad():
+                running_preds[running_i:(running_i + logits.shape[0])] = logits.detach().cpu().numpy().argmax(axis=-1)
+                running_labels[running_i:(running_i + logits.shape[0])] = labels.detach().cpu().numpy()
+                running_i += logits.shape[0]
+                if global_step % logging_steps == 0:
+                    # Record loss & acc on training set (over last logging_steps) and validation set
+                    training_acc = np.sum(running_preds == running_labels) / running_i
+                    log_training(running_loss, training_acc, logging_steps, global_step, learning_rate, scheduler, lr_policy,
+                                 tb_writer)
+                    running_loss, running_i = 0.0, 0
+                    running_preds.fill(0)
+                    running_labels.fill(0)
+
+                    validate_model(model, global_step, tic, tb_writer)
+
+                    # Save model
+                    if save_checkpoints:
+                        save_model(model, optimizer, epoch, global_step, running_loss,
+                                   output_dir / "checkpoints" / f"{global_step}.pt")
+            global_step += 1
+
+
+        # Validation at end of each epoch
         with torch.no_grad():
-            running_preds[running_i:(running_i + logits.shape[0])] = logits.detach().cpu().numpy().argmax(axis=-1)
-            running_labels[running_i:(running_i + logits.shape[0])] = labels.detach().cpu().numpy()
-            running_i += logits.shape[0]
-            if global_step % logging_steps == 0:
-                # Record loss & acc on training set (over last logging_steps) and validation set
-                training_acc = np.sum(running_preds == running_labels) / running_i
-                log_training(running_loss, training_acc, logging_steps, global_step, learning_rate, scheduler, lr_policy,
-                             tb_writer)
-                running_loss, running_i = 0.0, 0
-                running_preds.fill(0)
-                running_labels.fill(0)
+            validate_model(model, global_step, tic, tb_writer)
+        # Save model
+        if save_checkpoints:
+            save_model(model, optimizer, epoch, global_step, running_loss, output_dir / "checkpoints" / f"{global_step}.pt")
 
-                validate_model(model, global_step, tic, tb_writer)
+    tb_writer.close()
 
-                # Save model
-                if save_checkpoints:
-                    save_model(model, optimizer, epoch, global_step, running_loss,
-                               output_dir / "checkpoints" / f"{global_step}.pt")
-        global_step += 1
-
-
-    # Validation at end of each epoch
-    with torch.no_grad():
-        validate_model(model, global_step, tic, tb_writer)
     # Save model
-    if save_checkpoints:
-        save_model(model, optimizer, epoch, global_step, running_loss, output_dir / "checkpoints" / f"{global_step}.pt")
-
-tb_writer.close()
-
-# Save model
-save_model(model, optimizer, epoch, global_step, running_loss, output_dir / f"final.pt")
+    save_model(model, optimizer, epoch, global_step, running_loss, output_dir / f"final.pt")
