@@ -30,7 +30,7 @@ data_transforms = {
         transforms.ToTensor(),
         #RandomGreen(64, 64),
         #transforms.Resize((768, 576)),
-        GetPatches(800, 600, 224),
+        GetPatches(800, 600, 224),#, min_ratio=None, min_value=None, min_hue=None, max_hue=None),
         TransformPatches([
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ]),
@@ -39,7 +39,7 @@ data_transforms = {
     ]),
     'val': transforms.Compose([
         transforms.ToTensor(),
-        GetPatches(800, 600, 224),
+        GetPatches(800, 600, 224),#, min_ratio=None, min_value=None, min_hue=None, max_hue=None),
         TransformPatches([
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ]),
@@ -109,7 +109,7 @@ if __name__ == "__main__":
     logging_dir.mkdir(exist_ok=True)
 
     n_epochs = 1
-    batch_size = 4
+    batch_size = 8
     learning_rate = 1e-6
     final_layers_lr = 0.0
     weight_decay = 0.0
@@ -119,13 +119,13 @@ if __name__ == "__main__":
         "num_classes": 5
     }
 
-    logging_steps = 2
+    logging_steps = 300
     save_checkpoints = True
 
     max_samples_per_image = 4 * 3 + 1
 
-    train_dset = LeafDataset("./data/train_images", "./data/train_images/labels.csv", transform=data_transforms["train"], tiny=True)
-    val_dset = LeafDataset("./data/val_images", "./data/val_images/labels.csv", transform=data_transforms["val"], tiny=True)
+    train_dset = LeafDataset("./data/train_images", "./data/train_images/labels.csv", transform=data_transforms["train"])
+    val_dset = LeafDataset("./data/val_images", "./data/val_images/labels.csv", transform=data_transforms["val"])
 
     train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=4, max_samples_per_image=max_samples_per_image)
     val_dataloader = LeafDataLoader(val_dset, batch_size=batch_size, shuffle=False, num_workers=4, max_samples_per_image=max_samples_per_image)

@@ -67,19 +67,20 @@ class LeafCollate(object):
         self.max_samples_per_image = max_samples_per_image
 
     def __call__(self, batch):
-        imgs = [item[0] for item in batch]
-        labels = [item[1] for item in batch]
-        n_pad_list = [self.max_samples_per_image - img.shape[0] for img in imgs]
-        _, c, h, w = imgs[0].shape
-        imgs = torch.cat([torch.cat([torch.FloatTensor(img),
-                                       torch.zeros((n_pad, c, h, w))]) for img, n_pad in zip(imgs, n_pad_list)], dim=0)
-        labels = torch.cat([torch.LongTensor([label] * (self.max_samples_per_image - n_pad) + n_pad * [-1]) for label, n_pad in zip(labels, n_pad_list)], dim=0)
+        bs = len(batch)
+        _, c, h, w = batch[0][0].shape
+        batch_imgs = torch.zeros((bs * self.max_samples_per_image, c, h, w))
+        batch_labels = torch.full((bs * self.max_samples_per_image,), -1)
+        for i, (imgs, labels) in enumerate(batch):
+            n_pad = self.max_samples_per_image - imgs.shape[0]
+            batch_imgs[(i*self.max_samples_per_image):(i*self.max_samples_per_image + imgs.shape[0]), :, :, :] = imgs
+            batch_labels[(i*self.max_samples_per_image):(i*self.max_samples_per_image + imgs.shape[0])] = labels
         #_, n_samples, c, h, w = imgs.shape
         #n_pad = len(batch) * self.max_samples_per_image - n_samples
         # imgs = torch.cat([imgs,
         #                   torch.zeros((n_pad, c, h, w))], dim=0)
         # labels = torch.LongTensor(labels + n_pad * [-1])
-        return imgs, labels
+        return batch_imgs, batch_labels
 
 
 class LeafDataLoader(DataLoader):
@@ -170,10 +171,10 @@ class GetPatches(object):
         patches = []
         if self.include_whole:
             patches.append(self.center_crop(self.resize(sample)))
-        #[0] + np.arange(self.patch_size - self.offset_y, (self.y_patches - 2) * self.patch_size - self.offset_y, self.patch_size, dtype=int).tolist() + [self.img_height - self.patch_size
-        for patch_y in [0] + [y * self.patch_size - self.offset_y for y in range(1, self.y_patches-1)] + [self.img_height - self.patch_size]:
-            #[0] + np.arange(self.patch_size - self.offset_x, (self.x_patches - 2) * self.patch_size - self.offset_x, self.patch_size, dtype=int).tolist() + [self.img_width - self.patch_size
-            for patch_x in [0] + [x * self.patch_size - self.offset_x for x in range(1, self.x_patches-1)] + [self.img_width - self.patch_size]:
+        for patch_y in [0] + np.arange(self.patch_size - self.offset_y, (self.y_patches - 2) * self.patch_size - self.offset_y, self.patch_size, dtype=int).tolist() + [self.img_height - self.patch_size]:
+        # for patch_y in [0] + [y * self.patch_size - self.offset_y for y in range(1, self.y_patches-1)] + [self.img_height - self.patch_size]:
+            for patch_x in [0] + np.arange(self.patch_size - self.offset_x, (self.x_patches - 2) * self.patch_size - self.offset_x, self.patch_size, dtype=int).tolist() + [self.img_width - self.patch_size]:
+            # for patch_x in [0] + [x * self.patch_size - self.offset_x for x in range(1, self.x_patches-1)] + [self.img_width - self.patch_size]:
                 patch = sample[:, (patch_y):(patch_y + self.patch_size), (patch_x):(patch_x + self.patch_size)] # y before x
                 if self.min_ratio:
                     if test_colors(patch, self.min_ratio, self.min_value, self.min_hue, self.max_hue):
