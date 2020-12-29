@@ -14,6 +14,7 @@ from torchvision.transforms import RandomCrop, RandomResizedCrop, CenterCrop, Re
 
 TINY_SIZE = 10
 
+
 class LeafIterableDataset(IterableDataset):
     """
     Cassava Leaf Disease Classification dataset.
@@ -61,15 +62,35 @@ class LeafIterableDataset(IterableDataset):
             yield img, label
 
 
+class LeafCollate(object):
+    def __init__(self, max_samples_per_image):
+        self.max_samples_per_image = max_samples_per_image
+
+    def __call__(self, batch):
+        imgs = [item[0] for item in batch]
+        labels = [item[1] for item in batch]
+        n_pad_list = [self.max_samples_per_image - img.shape[0] for img in imgs]
+        _, c, h, w = imgs[0].shape
+        imgs = torch.cat([torch.cat([torch.FloatTensor(img),
+                                       torch.zeros((n_pad, c, h, w))]) for img, n_pad in zip(imgs, n_pad_list)], dim=0)
+        labels = torch.cat([torch.LongTensor([label] * (self.max_samples_per_image - n_pad) + n_pad * [-1]) for label, n_pad in zip(labels, n_pad_list)], dim=0)
+        #_, n_samples, c, h, w = imgs.shape
+        #n_pad = len(batch) * self.max_samples_per_image - n_samples
+        # imgs = torch.cat([imgs,
+        #                   torch.zeros((n_pad, c, h, w))], dim=0)
+        # labels = torch.LongTensor(labels + n_pad * [-1])
+        return imgs, labels
+
+
 class LeafDataLoader(DataLoader):
     def __init__(self, dset, batch_size, shuffle, num_workers=4, max_samples_per_image=1):
-        super().__init__(dset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True)
-        self.max_dataloader_len = ceil(len(dset) * max_samples_per_image / batch_size)
+        super().__init__(dset, collate_fn=LeafCollate(max_samples_per_image), batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True)
+        self.dataloader_len = ceil(len(dset) / batch_size)
         self.max_samples_per_image = max_samples_per_image
-        self.max_num_samples = len(dset) * max_samples_per_image
+        self.num_padded_samples = self.dataloader_len * self.batch_size * max_samples_per_image
 
     def __len__(self):
-        return self.max_dataloader_len
+        return self.dataloader_len
 
 
 class LeafDataset(Dataset):

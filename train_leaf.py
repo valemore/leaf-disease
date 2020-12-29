@@ -76,24 +76,24 @@ def log_training(running_loss, training_acc, logging_steps, global_step, learnin
         raise
 
 
-def validate_model(model, global_step, training_start_time, tb_writer, samples_per_image):
+def validate_model(model, global_step, training_start_time, tb_writer):
     """Runs model on validation set and writes results using tensorboard"""
     model.eval()
-    logits_all = torch.zeros((len(val_dataloader), samples_per_image, 5), dtype=float)
-    labels_all = torch.zeros((len(val_dataloader), samples_per_image), dtype=int)
+    logits_all = torch.zeros((val_dataloader.num_padded_samples, 5), dtype=float)
+    labels_all = torch.zeros((val_dataloader.num_padded_samples), dtype=int)
     i = 0
     for imgs, labels in tqdm(val_dataloader):
         imgs = imgs.to(device)
         labels = labels.to(device)
-        bs, n_patches, _ = imgs.shape
-        assert n_patches == samples_per_image
-        logits_all[i:(i+bs), :, :] = model.forward(imgs)
-        labels_all[i:(i+bs), :] = labels
-        i += bs
+        effective_bs = imgs.shape[0]
+        logits_all[i:(i+effective_bs), :] = model.forward(imgs)
+        labels_all[i:(i+effective_bs)] = labels
+        i += effective_bs
 
-    val_loss = F.cross_entropy(logits_all.reshape(-1, 5), labels_all.reshape(-1, 5))
-    preds_all = logits_all.reshape(-1, 5).cpu().numpy().argmax(axis=-1)
-    val_acc = np.sum(labels_all.reshape(-1, 5).cpu().numpy() == preds_all) / i
+    val_loss = F.cross_entropy(logits_all, labels_all, ignore_index=-1)
+    preds_all = logits_all.cpu().numpy().argmax(axis=-1)
+    labels_all = labels_all.cpu().numpy()
+    val_acc = np.sum((labels_all == preds_all) & (labels_all != -1)) / np.sum(labels_all != -1)
 
     print("Time to global step %d took %.1f sec, val loss %.3f, val acc %.3f" % (
         global_step, time.time() - training_start_time, val_loss, val_acc))
@@ -119,14 +119,16 @@ if __name__ == "__main__":
         "num_classes": 5
     }
 
-    logging_steps = 6
+    logging_steps = 2
     save_checkpoints = True
+
+    max_samples_per_image = 4 * 3 + 1
 
     train_dset = LeafDataset("./data/train_images", "./data/train_images/labels.csv", transform=data_transforms["train"], tiny=True)
     val_dset = LeafDataset("./data/val_images", "./data/val_images/labels.csv", transform=data_transforms["val"], tiny=True)
 
-    train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=1, max_samples_per_image=4 * 3 + 1)
-    val_dataloader = LeafDataLoader(val_dset, batch_size=batch_size, shuffle=False, num_workers=1, max_samples_per_image=4 * 3 + 1)
+    train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=4, max_samples_per_image=max_samples_per_image)
+    val_dataloader = LeafDataLoader(val_dset, batch_size=batch_size, shuffle=False, num_workers=4, max_samples_per_image=max_samples_per_image)
 
     device = torch.device("cpu")
 
@@ -166,7 +168,7 @@ if __name__ == "__main__":
          'weight_decay': 0.0},
     ]
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(ignore_index=-1)
     optimizer = Adam(optimizer_grouped_parameters, lr=learning_rate, weight_decay=weight_decay)
     lr_policy = "onecycle"
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_dataloader), epochs=n_epochs)
@@ -201,9 +203,8 @@ if __name__ == "__main__":
 
     running_loss = 0.0
     running_i = 0
-    running_preds = np.zeros(logging_steps * batch_size, dtype=int)
-    running_labels = np.zeros(logging_steps * batch_size, dtype=int)
-
+    running_preds = np.zeros(logging_steps * batch_size * max_samples_per_image, dtype=int)
+    running_labels = np.zeros(logging_steps * batch_size * max_samples_per_image, dtype=int)
 
     model.train()
     model = model.to(device)
@@ -231,14 +232,14 @@ if __name__ == "__main__":
                 running_i += logits.shape[0]
                 if global_step % logging_steps == 0:
                     # Record loss & acc on training set (over last logging_steps) and validation set
-                    training_acc = np.sum(running_preds == running_labels) / running_i
+                    training_acc = np.sum((running_preds == running_labels) & (running_labels != -1)) / np.sum(running_labels != -1)
                     log_training(running_loss, training_acc, logging_steps, global_step, learning_rate, scheduler, lr_policy,
                                  tb_writer)
                     running_loss, running_i = 0.0, 0
                     running_preds.fill(0)
                     running_labels.fill(0)
 
-                    validate_model(model, global_step, tic, tb_writer, samples_per_image=13)
+                    validate_model(model, global_step, tic, tb_writer)
 
                     # Save model
                     if save_checkpoints:
@@ -249,7 +250,7 @@ if __name__ == "__main__":
 
         # Validation at end of each epoch
         with torch.no_grad():
-            validate_model(model, global_step, tic, tb_writer, samples_per_image=13)
+            validate_model(model, global_step, tic, tb_writer)
         # Save model
         if save_checkpoints:
             save_model(model, optimizer, epoch, global_step, running_loss, output_dir / "checkpoints" / f"{global_step}.pt")
