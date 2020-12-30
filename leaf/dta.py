@@ -85,7 +85,8 @@ class LeafCollate(object):
 
 class LeafDataLoader(DataLoader):
     def __init__(self, dset, batch_size, shuffle, num_workers=4, max_samples_per_image=1):
-        super().__init__(dset, collate_fn=LeafCollate(max_samples_per_image), batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True)
+        collate_fn = None if max_samples_per_image == 1 else LeafCollate(max_samples_per_image)
+        super().__init__(dset, collate_fn=collate_fn, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True)
         self.dataloader_len = ceil(len(dset) / batch_size)
         self.max_samples_per_image = max_samples_per_image
         self.num_padded_samples = self.dataloader_len * self.batch_size * max_samples_per_image
@@ -186,16 +187,11 @@ class GetPatches(object):
 
 
 class TransformPatches(object):
-    def __init__(self, transforms):
-        self.transforms = transforms
+    def __init__(self, transform):
+        self.transform = transform
 
     def __call__(self, patches):
-        transformed_patches = []
-        for patch in patches:
-            for t in self.transforms:
-                patch = t(patch)
-            transformed_patches.append(patch)
-        return transformed_patches
+        return [self.transform(patch) for patch in patches]
 
 
 class RandomGreen(object):

@@ -18,3 +18,15 @@ Treat label 1 differently? Always use patch?
 Pin memory
 Maybe Do Lambda Trick after applying transforms to patches
 Verify transforms
+
+Why slow?
+Why high memory use?
+Compare with RandomCrop
+
+Pre-process on disk?
+
+Different schedules: Linear, Karpathy style, the other Cosine stuff from the forums
+
+Topic of memory/batch size: Consider that in the GetPatches case effective batch size is x13
+Compare with vanilla setup from before (speed, memory)
+Look at PyTorch's implementation of the Crop transforms
