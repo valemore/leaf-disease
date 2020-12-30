@@ -1,0 +1,14 @@
+no custom aug
+efficientnet-b4
+batch_size 16
+one epoch (1204 steps) < 5 minutes
+
+with custom aug GetPatches (13 samples per image)
+efficientnet-b4
+batch_size 4 (effective batch size 52?
+one epoch (4815 steps) 13/14 hours !!!
+
+^^ NO GPU YOU FOOL
+
+ONE EPOCH OF GETPATCHES
+45 minutes

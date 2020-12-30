@@ -30,3 +30,10 @@ Different schedules: Linear, Karpathy style, the other Cosine stuff from the for
 Topic of memory/batch size: Consider that in the GetPatches case effective batch size is x13
 Compare with vanilla setup from before (speed, memory)
 Look at PyTorch's implementation of the Crop transforms
+
+
+# NEW TODO
+- Validation logic (hand-crafted? using ML, NN, trees, SVM or something?)
+- Learning rate scheduling
+- Training machinery (warmup, train one epoch on GetPatches, then RandomGreen ad nauseam, valdiate on GetPatches using validation logic)
+- Folds?

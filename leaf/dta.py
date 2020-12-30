@@ -10,6 +10,7 @@ from math import ceil, floor
 import torch
 from torch.utils.data import Dataset, IterableDataset, get_worker_info, DataLoader
 from torchvision.transforms import RandomCrop, RandomResizedCrop, CenterCrop, Resize
+from torchvision.transforms.functional import crop
 
 
 TINY_SIZE = 10
@@ -98,7 +99,8 @@ class LeafDataLoader(DataLoader):
 class LeafDataset(Dataset):
     """Cassava Leaf Disease Classification dataset."""
 
-    def __init__(self, img_dir, labels_csv=None, transform=None, tiny=False):
+    def __init__(self, img_dir, labels_csv=None, extended_labels=False, transform=None, tiny=False):
+        assert not (extended_labels and labels_csv is None)
         self.img_dir = img_dir if isinstance(img_dir, Path) else Path(img_dir)
         self.transform = transform
         self.tiny = tiny
@@ -106,8 +108,14 @@ class LeafDataset(Dataset):
             df = pd.read_csv(labels_csv)
             if self.tiny:
                 df = df.iloc[:TINY_SIZE, :]
-            self.fnames = df["image_id"].values
-            self.labels = df["label"].values
+            if extended_labels:
+                self.fnames = np.array([f"{fname}-{patch_idx:03}.jpg" for fname, n_patches in zip(df["fname"], df["n_patches"]) for patch_idx in range(n_patches)])
+                self.labels = np.array([label for label, n_patches in zip(df["label"], df["n_patches"]) for _ in range(n_patches)])
+                self.original_fnames = np.array([fname for fname, n_patches in zip(df["fname"], df["n_patches"]) for _ in range(n_patches)])
+                self.n_patches = np.array([n_patches for n_patches in df["n_patches"] for _ in range(n_patches)])
+            else:
+                self.fnames = df["image_id"].values
+                self.labels = df["label"].values
         else:
             self.fnames = np.array([img.name for img in img_dir.glob("*.jpg")])
             if self.tiny:
@@ -162,21 +170,18 @@ class GetPatches(object):
         assert self.patch_size == 224 # TODO
         self.x_patches = ceil(img_width / patch_size)
         self.y_patches = ceil(img_height / patch_size)
-        extra_x = (self.x_patches * patch_size) % img_width
-        extra_y = (self.y_patches * patch_size) % img_height
-        self.offset_x = floor(extra_x / (self.x_patches - 1))
-        self.offset_y = floor(extra_y / (self.y_patches - 1))
+        self.step_x = floor((self.img_width - self.patch_size) / (self.x_patches - 1))
+        self.step_y = floor((self.img_height - self.patch_size) / (self.y_patches - 1))
 
     def __call__(self, sample):
         assert tuple(sample.shape[1:]) == (self.img_height, self.img_width)
         patches = []
         if self.include_whole:
             patches.append(self.center_crop(self.resize(sample)))
-        for patch_y in [0] + np.arange(self.patch_size - self.offset_y, (self.y_patches - 2) * self.patch_size - self.offset_y, self.patch_size, dtype=int).tolist() + [self.img_height - self.patch_size]:
-        # for patch_y in [0] + [y * self.patch_size - self.offset_y for y in range(1, self.y_patches-1)] + [self.img_height - self.patch_size]:
-            for patch_x in [0] + np.arange(self.patch_size - self.offset_x, (self.x_patches - 2) * self.patch_size - self.offset_x, self.patch_size, dtype=int).tolist() + [self.img_width - self.patch_size]:
-            # for patch_x in [0] + [x * self.patch_size - self.offset_x for x in range(1, self.x_patches-1)] + [self.img_width - self.patch_size]:
-                patch = sample[:, (patch_y):(patch_y + self.patch_size), (patch_x):(patch_x + self.patch_size)] # y before x
+
+        for patch_y in np.arange(self.y_patches) * self.step_y:
+            for patch_x in np.arange(self.x_patches) * self.step_x:
+                patch = crop(sample, patch_y, patch_x, self.patch_size, self.patch_size)
                 if self.min_ratio:
                     if test_colors(patch, self.min_ratio, self.min_value, self.min_hue, self.max_hue):
                         patches.append(patch)
