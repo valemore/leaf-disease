@@ -116,6 +116,8 @@ class LeafDataset(Dataset):
             else:
                 self.fnames = df["image_id"].values
                 self.labels = df["label"].values
+                self.original_fnames = None
+                self.n_patches = None
         else:
             self.fnames = np.array([img.name for img in img_dir.glob("*.jpg")])
             if self.tiny:
@@ -136,7 +138,13 @@ class LeafDataset(Dataset):
             label = self.labels[idx]
         else:
             label = None
-        return img, label
+        # if self.original_fnames is not None:
+        #     original_fname = self.original_fnames[idx]
+        #     n_patches = self.n_patches[idx]
+        # else:
+        #     original_fname = None
+        #     n_patches = None
+        return img, label, idx
 
 
 def convert_to_hsv(a):

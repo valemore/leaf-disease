@@ -133,7 +133,7 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
     step = 1
 
     tic = time.time()
-    for imgs, labels in tqdm(data_loader):
+    for imgs, labels, idxs in tqdm(data_loader):
         if max_steps and step > max_steps:
             break
         imgs = imgs.to(leaf_model.device)
@@ -171,7 +171,7 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
                         checkpoint_name = f"checkpoint_{epoch_name}_{step}"
                         leaf_model.save_checkpoint(checkpoint_name, leaf_model.optimizer, epoch_name, step, running_loss)
 
-            print(f"Time to step {step} took {(time.time() - tic):.1f} sec")
+                    print(f"Time to step {step} took {(time.time() - tic):.1f} sec")
         step += 1
 
 
@@ -181,7 +181,7 @@ def validate_one_epoch(leaf_model: LeafModel, data_loader):
         logits_all = torch.zeros((data_loader.num_padded_samples, 5), dtype=float, device=leaf_model.device)
         labels_all = torch.zeros((data_loader.num_padded_samples), dtype=int, device=leaf_model.device)
         i = 0
-        for imgs, labels in tqdm(data_loader):
+        for imgs, labels, idxs in tqdm(data_loader):
             imgs = imgs.to(leaf_model.device)
             labels = labels.to(leaf_model.device)
             bs = imgs.shape[0]
@@ -209,7 +209,7 @@ def warmup(leaf_model: LeafModel, data_loader: LeafDataLoader, n_steps, learning
     optimizer = torch.optim.Adam(leaf_model.model.parameters(), lr=learning_rate)
     tic = time.time()
     steps = 0
-    for imgs, labels in tqdm(data_loader, total=min(len(data_loader), n_steps)):
+    for imgs, labels, idxs in tqdm(data_loader, total=min(len(data_loader), n_steps)):
         if steps == n_steps:
             break
         leaf_model.model.train()
