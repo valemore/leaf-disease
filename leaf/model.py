@@ -171,7 +171,7 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
                         checkpoint_name = f"checkpoint_{epoch_name}_{step}"
                         leaf_model.save_checkpoint(checkpoint_name, leaf_model.optimizer, epoch_name, step, running_loss)
 
-        print(f"Time to step {step} took {(time.time() - tic):.1f} sec")
+            print(f"Time to step {step} took {(time.time() - tic):.1f} sec")
         step += 1
 
 
