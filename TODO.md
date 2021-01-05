@@ -37,6 +37,10 @@ Look at PyTorch's implementation of the Crop transforms
 - Learning rate scheduling
 - Training machinery (warmup, train one epoch on GetPatches, then RandomGreen ad nauseam, valdiate on GetPatches using validation logic)
 - Folds?
+- Balance the classes during training
 
 
+The run with GetPatches that went reasonably well
 Dec30_23-03-08
+
+# INFERENCE LOGIC
