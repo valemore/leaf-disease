@@ -4,6 +4,7 @@ import subprocess
 import time
 
 import numpy as np
+import pandas as pd
 from pathlib import Path
 
 import timm
@@ -158,7 +159,19 @@ class LeafModel(object):
         checkpoint = torch.load(self.output_model_dir / checkpoint_name)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.model = self.model.to(self.device)
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if self.optimizer is not None:
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if self.scheduler is not None:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+    def load_checkpoint_from_file(self, fname):
+        checkpoint = torch.load(fname)
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.model = self.model.to(self.device)
+        if self.optimizer is not None:
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if self.scheduler is not None:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
 
 def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_steps=None, val_data_loader=None, save_at_log_steps=False, epoch_name="", max_steps=None):
@@ -223,11 +236,26 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
         step += 1
 
 
-def validate_one_epoch(leaf_model: LeafModel, data_loader):
+def get_img_id(img_fname):
+    if img_fname == "":
+        return -1
+    return int(img_fname[:-4])
+
+
+def get_patch_id(patch_fname):
+    if patch_fname == "":
+        return -1
+    return int(patch_fname[-7:-4])
+
+
+def validate_one_epoch(leaf_model: LeafModel, data_loader, ensemble_patches=True):
     leaf_model.model.eval()
     with torch.no_grad():
         logits_all = torch.zeros((data_loader.num_padded_samples, 5), dtype=float, device=leaf_model.device)
         labels_all = torch.zeros((data_loader.num_padded_samples), dtype=int, device=leaf_model.device)
+        if ensemble_patches:
+            img_ids = np.zeros(data_loader.num_padded_samples, dtype=int)
+        #patch_ids = np.zeros(data_loader.num_padded_samples, dtype=int)
         i = 0
         for imgs, labels, idxs in tqdm(data_loader):
             imgs = imgs.to(leaf_model.device)
@@ -235,13 +263,39 @@ def validate_one_epoch(leaf_model: LeafModel, data_loader):
             bs = imgs.shape[0]
             logits_all[i:(i + bs), :] = leaf_model.model.forward(imgs)
             labels_all[i:(i + bs)] = labels
+            if ensemble_patches:
+                img_ids[i:(i + bs)] = np.array([get_img_id(data_loader.dataset.original_fnames[idx]) for idx in idxs])
+            #patch_ids[i:(i + bs)] = np.array([get_patch_id(data_loader.dataset.fnames[idx]) for idx in idxs])
             i += bs
 
         val_loss = leaf_model.loss_fn(logits_all, labels_all)
-        preds_all = logits_all.argmax(axis=-1)
-        val_acc = (labels_all == preds_all).sum().item() / i
+        raw_preds_all = logits_all.argmax(axis=-1)
+        raw_val_acc = (labels_all == raw_preds_all).sum().item() / i
 
-        return val_loss, val_acc
+        if ensemble_patches:
+            pred_df = pd.DataFrame({
+                "img_id": img_ids,
+                #"patch_idx": patch_ids,
+                "label": labels_all.cpu().numpy().astype(int),
+                "logits_0": logits_all.cpu().numpy()[:, 0],
+                "logits_1": logits_all.cpu().numpy()[:, 1],
+                "logits_2": logits_all.cpu().numpy()[:, 2],
+                "logits_3": logits_all.cpu().numpy()[:, 3],
+                "logits_4": logits_all.cpu().numpy()[:, 4]
+                # "raw_pred": raw_preds_all.cpu().numpy().astype(int)
+            })
+
+            pred_df = pred_df.groupby("img_id").agg(
+                {"label": "first", "logits_0": "mean", "logits_1": "mean", "logits_2": "mean", "logits_3": "mean",
+                 "logits_4": "mean"}).reset_index()
+            preds = pred_df.loc[:, ["logits_0", "logits_1", "logits_2", "logits_3", "logits_4"]].values.argmax(-1)
+
+            acc = (pred_df["label"].values == preds).sum() / len(preds)
+
+            return val_loss, raw_val_acc, acc
+
+        return val_loss, raw_val_acc
+
 
 
 def warmup(leaf_model: LeafModel, data_loader: LeafDataLoader, n_steps, log_warmup=False):
