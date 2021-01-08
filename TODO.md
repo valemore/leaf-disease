@@ -44,3 +44,22 @@ The run with GetPatches that went reasonably well
 Dec30_23-03-08
 
 # INFERENCE LOGIC
+
+# NEEEEEW TODO
+- Why does loss go up at start of new epoch? Too high learning rate, we forget a bit?
+- Balanced class sampling
+- Learning rate schedule
+- 5 Fold CV
+- Verify Green
+- Experiment with image resolutions / model sizes
+
+- Get into some chats and stuff
+
+- How to ensemble correctly? Mean logits? Mean probs? Something else?
+  (do both variants - mean logits and mean probs)
+  
+- Try vanilla ensemble methods (CropFive, RandomCrop, RandomResizedCrops)
+- Try onecyle with GetPatches
+- GetPatches bigger model proper way
+  b4, proper size, one cycle or another scheduler, or no schedule?
+- test_colors hyperparameters (check it out with b0)

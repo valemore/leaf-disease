@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from leaf.dta import LeafDataLoader
+from leaf.dta import LeafDataLoader, get_img_id, get_patch_id
 
 
 num_classes = 5
@@ -28,7 +28,7 @@ def path_maybe(pth):
 def ema(ma, x, alpha, step):
     if ma is None:
         return x
-    return (alpha * x + (1 - alpha) * ma) / (1 - (1 - alpha) ** step)
+    return (alpha * x + (1 - alpha) * ma) # / (1 - (1 - alpha) ** step)
     #return (beta * v + (1 - beta) * x) / (1 - beta ** step)
 
 
@@ -59,19 +59,22 @@ def log_commit(fname):
         f.write(git_cmd_result.stdout.decode("utf-8"))
 
 class LeafModel(object):
-    def __init__(self, arch, model_prefix=None, output_dir=None, logging_dir=None):
+    def __init__(self, arch, model_prefix=None, output_dir=None, logging_dir=None, ragged_batches=False):
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self._model_prefix = model_prefix if model_prefix is not None else f"model_{datetime.now().strftime('%b%d_%H-%M-%S')}"
         self.output_top_dir = path_maybe(output_dir)
         self.logging_top_dir = path_maybe(logging_dir)
-        self.loss_fn = nn.CrossEntropyLoss().to(self.device)
+        if not ragged_batches:
+            self.loss_fn = nn.CrossEntropyLoss().to(self.device)
+        else:
+            self.loss_fn = nn.CrossEntropyLoss(ignore_index=-1).to(self.device)
         self.optimizer = None
         self.scheduler = None
 
-        if arch in ["tf_efficientnet_b4_ns"]:
-            self.model = timm.create_model(model_name=arch, num_classes=num_classes, pretrained=True)
-        else:
-            raise Exception(f"Unknown architecture name {arch}!")
+        #if arch in ["tf_efficientnet_b4_ns"]:
+        self.model = timm.create_model(model_name=arch, num_classes=num_classes, pretrained=True)
+        # else:
+        #     raise Exception(f"Unknown architecture name {arch}!")
 
     @property
     def model_prefix(self):
@@ -138,15 +141,17 @@ class LeafModel(object):
         tb_writer.add_scalar("acc/train", training_acc, global_step)
         tb_writer.add_scalar("lr", self.get_learning_rate(), global_step)
 
-    def log_training_ema(self, loss, acc, step, tb_writer):
-        print('Step %5d EMA train loss: %.3f, EMA train acc: %.3f' %
-              (step, loss, acc))
+    def log_training_ema(self, loss, acc, step, tb_writer, verbose=False):
+        if verbose:
+            print('Step %5d EMA train loss: %.3f, EMA train acc: %.3f' %
+                  (step, loss, acc))
         tb_writer.add_scalar("loss/train", loss, step)
         tb_writer.add_scalar("acc/train", acc, step)
         tb_writer.add_scalar("lr", self.get_learning_rate(), step)
 
-    def log_validation(self, val_loss, val_acc, step, tb_writer):
-        print("Validation after step %5d: val loss %.3f, val acc %.3f" % (step, val_loss, val_acc))
+    def log_validation(self, val_loss, val_acc, step, tb_writer, verbose=True):
+        if verbose:
+            print("Validation after step %5d: val loss %.3f, val acc %.3f" % (step, val_loss, val_acc))
         tb_writer.add_scalar("loss/val", val_loss, step)
         tb_writer.add_scalar("acc/val", val_acc, step)
 
@@ -174,7 +179,7 @@ class LeafModel(object):
             self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
 
-def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_steps=None, val_data_loader=None, save_at_log_steps=False, epoch_name="", max_steps=None):
+def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_steps=None, val_data_loader=None, save_at_log_steps=False, epoch_name="", max_steps=None, ema_steps=None):
     if log_steps is not None:
         leaf_model._prepare_logging()
     print(f"Training one epoch ({epoch_name}) with a total of {len(data_loader)} steps...")
@@ -186,7 +191,10 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
         leaf_model._prepare_logging()
         log_commit(leaf_model.logging_model_dir / "commit.txt")
         tb_writer = SummaryWriter(log_dir=leaf_model.logging_model_dir / logging_prefix)
-        alpha = 2.0 / (log_steps + 1)
+        if isinstance(log_steps, int):
+            alpha = 2.0 / (log_steps + 1)
+        else:
+            alpha = 2.0 / (ema_steps + 1)
         #beta = min(1.0 - 1.0 / log_steps, 0.9)
         running_loss = None
         running_acc = None
@@ -217,38 +225,34 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
         # Metrics and logging
         if log_steps:
             with torch.no_grad():
-                if step % log_steps == 0:
-                    running_loss = ema(running_loss, loss.mean().item(), alpha, step)
-                    preds = logits.argmax(axis=-1)
-                    acc = (preds == labels).sum().item() / preds.shape[0]
-                    running_acc = ema(running_acc, acc, alpha, step)
-                    leaf_model.log_training_ema(running_loss, running_acc, step, tb_writer)
-                    if val_data_loader is not None:
+                running_loss = ema(running_loss, loss.mean().item(), alpha, step)
+                preds = logits.argmax(axis=-1)
+                acc = (preds == labels).sum().item() / preds.shape[0]
+                running_acc = ema(running_acc, acc, alpha, step)
+                leaf_model.log_training_ema(running_loss, running_acc, step, tb_writer)
+
+            if isinstance(log_steps, int) and step % log_steps == 0:
+                print('Step %5d EMA train loss: %.3f, EMA train acc: %.3f' % (step, running_loss, running_acc))
+                if val_data_loader is not None:
+                    if data_loader.max_samples_per_image > 1:
+                        val_loss, raw_val_acc, val_acc = validate_one_epoch(leaf_model, val_data_loader)
+                        leaf_model.log_validation(val_loss, val_acc, step, tb_writer)
+                        tb_writer.add_scalar("raw_acc/val", raw_val_acc, step)
+                    else:
                         val_loss, val_acc = validate_one_epoch(leaf_model, val_data_loader)
                         leaf_model.log_validation(val_loss, val_acc, step, tb_writer)
 
-                    # Save model
-                    if save_at_log_steps:
-                        checkpoint_name = f"checkpoint_{epoch_name}_{step}"
-                        leaf_model.save_checkpoint(checkpoint_name, epoch_name, step, running_loss)
+                # Save model
+                if save_at_log_steps:
+                    checkpoint_name = f"checkpoint_{epoch_name}_{step}"
+                    leaf_model.save_checkpoint(checkpoint_name, epoch_name, step, running_loss)
 
-                    print(f"Time to step {step} took {(time.time() - tic):.1f} sec")
+                print(f"Time to step {step} took {(time.time() - tic):.1f} sec")
         step += 1
 
 
-def get_img_id(img_fname):
-    if img_fname == "":
-        return -1
-    return int(img_fname[:-4])
-
-
-def get_patch_id(patch_fname):
-    if patch_fname == "":
-        return -1
-    return int(patch_fname[-7:-4])
-
-
-def validate_one_epoch(leaf_model: LeafModel, data_loader, ensemble_patches=True):
+def validate_one_epoch(leaf_model: LeafModel, data_loader):
+    ensemble_patches = data_loader.max_samples_per_image > 1
     leaf_model.model.eval()
     with torch.no_grad():
         logits_all = torch.zeros((data_loader.num_padded_samples, 5), dtype=float, device=leaf_model.device)
@@ -264,7 +268,7 @@ def validate_one_epoch(leaf_model: LeafModel, data_loader, ensemble_patches=True
             logits_all[i:(i + bs), :] = leaf_model.model.forward(imgs)
             labels_all[i:(i + bs)] = labels
             if ensemble_patches:
-                img_ids[i:(i + bs)] = np.array([get_img_id(data_loader.dataset.original_fnames[idx]) for idx in idxs])
+                img_ids[i:(i + bs)] = np.array([data_loader.dataset.img_ids[idx] for idx in idxs])
             #patch_ids[i:(i + bs)] = np.array([get_patch_id(data_loader.dataset.fnames[idx]) for idx in idxs])
             i += bs
 
