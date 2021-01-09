@@ -63,3 +63,10 @@ Dec30_23-03-08
 - GetPatches bigger model proper way
   b4, proper size, one cycle or another scheduler, or no schedule?
 - test_colors hyperparameters (check it out with b0)
+
+- number of crops as hyperparameter
+- all in the same batch? clip? compare to not putting them out all once
+
+
+## Weight decay and learning rate (schedules)
+EfficientNet: RMSProp, 1e-5 weight decay and 0.264 learning rate that decays by ... every 2.4 epochs

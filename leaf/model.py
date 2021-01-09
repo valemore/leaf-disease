@@ -235,12 +235,17 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
                 print('Step %5d EMA train loss: %.3f, EMA train acc: %.3f' % (step, running_loss, running_acc))
                 if val_data_loader is not None:
                     if data_loader.max_samples_per_image > 1:
-                        val_loss, raw_val_acc, val_acc = validate_one_epoch(leaf_model, val_data_loader)
-                        leaf_model.log_validation(val_loss, val_acc, step, tb_writer)
-                        tb_writer.add_scalar("raw_acc/val", raw_val_acc, step)
+                        val_loss, val_raw_acc, val_logits_mean_acc, val_probs_mean_acc = validate_one_epoch(leaf_model, val_data_loader)
+                        print(f"Validation after step %5d: loss {val_loss}, raw acc {val_raw_acc}, logits mean acc {val_logits_mean_acc}, probs mean acc {val_probs_mean_acc}")
+                        tb_writer.add_scalar("loss/val", val_loss, step)
+                        tb_writer.add_scalar("raw_acc/val", val_raw_acc, step)
+                        tb_writer.add_scalar("logits_mean_acc/val", val_logits_mean_acc, step)
+                        tb_writer.add_scalar("probs_mean_acc/val", val_probs_mean_acc, step)
                     else:
                         val_loss, val_acc = validate_one_epoch(leaf_model, val_data_loader)
-                        leaf_model.log_validation(val_loss, val_acc, step, tb_writer)
+                        print(f"Validation after step %5d: loss {val_loss}, acc {val_acc}")
+                        tb_writer.add_scalar("loss/val", val_loss, step)
+                        tb_writer.add_scalar("acc/val", val_acc, step)
 
                 # Save model
                 if save_at_log_steps:
@@ -249,6 +254,10 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
 
                 print(f"Time to step {step} took {(time.time() - tic):.1f} sec")
         step += 1
+
+
+def softmax(x):
+    return np.exp(x)/sum(np.exp(x))
 
 
 def validate_one_epoch(leaf_model: LeafModel, data_loader):
@@ -272,12 +281,12 @@ def validate_one_epoch(leaf_model: LeafModel, data_loader):
             #patch_ids[i:(i + bs)] = np.array([get_patch_id(data_loader.dataset.fnames[idx]) for idx in idxs])
             i += bs
 
-        val_loss = leaf_model.loss_fn(logits_all, labels_all)
+        loss = leaf_model.loss_fn(logits_all, labels_all)
         raw_preds_all = logits_all.argmax(axis=-1)
-        raw_val_acc = (labels_all == raw_preds_all).sum().item() / i
+        raw_acc = (labels_all == raw_preds_all).sum().item() / i
 
         if ensemble_patches:
-            pred_df = pd.DataFrame({
+            logits_df = pd.DataFrame({
                 "img_id": img_ids,
                 #"patch_idx": patch_ids,
                 "label": labels_all.cpu().numpy().astype(int),
@@ -289,16 +298,22 @@ def validate_one_epoch(leaf_model: LeafModel, data_loader):
                 # "raw_pred": raw_preds_all.cpu().numpy().astype(int)
             })
 
-            pred_df = pred_df.groupby("img_id").agg(
-                {"label": "first", "logits_0": "mean", "logits_1": "mean", "logits_2": "mean", "logits_3": "mean",
-                 "logits_4": "mean"}).reset_index()
-            preds = pred_df.loc[:, ["logits_0", "logits_1", "logits_2", "logits_3", "logits_4"]].values.argmax(-1)
+            logits_mean_df = logits_df.groupby("img_id").agg(
+                {"label": "first", "logits_0": "mean", "logits_1": "mean", "logits_2": "mean", "logits_3": "mean", "logits_4": "mean"}).reset_index()
+            logits_mean_preds = logits_mean_df.loc[:, ["logits_0", "logits_1", "logits_2", "logits_3", "logits_4"]].values.argmax(-1)
+            logits_mean_acc = (logits_mean_df["label"].values == logits_mean_preds).sum() / len(logits_mean_preds)
 
-            acc = (pred_df["label"].values == preds).sum() / len(preds)
+            probs_df = pd.concat([logits_df.loc[:, ["img_id", "label"]],
+                                  pd.DataFrame(np.apply_along_axis(softmax, 1, logits_df.loc[:, ["logits_0", "logits_1", "logits_2", "logits_3", "logits_4"]].values))], axis=1)
+            probs_df.rename(columns={i: f"probs_{i}" for i in range(5)}, inplace=True)
+            probs_mean_df = probs_df.groupby("img_id").agg(
+                {"label": "first", "probs_0": "mean", "probs_1": "mean", "probs_2": "mean", "probs_3": "mean", "probs_4": "mean"}).reset_index()
+            probs_mean_preds = probs_mean_df.loc[:, ["probs_0", "probs_1", "probs_2", "probs_3", "probs_4"]].values.argmax(-1)
+            probs_mean_acc = (probs_mean_df["label"].values == probs_mean_preds).sum() / len(probs_mean_preds)
 
-            return val_loss, raw_val_acc, acc
+            return loss, raw_acc, logits_mean_acc, probs_mean_acc
 
-        return val_loss, raw_val_acc
+        return loss, raw_acc
 
 
 
