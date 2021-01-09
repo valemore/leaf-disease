@@ -6,10 +6,11 @@ from pathlib import Path
 from skimage import io
 from time import sleep
 from math import ceil, floor
+from sklearn.model_selection import StratifiedKFold
 
 import torch
 from torch.utils.data import Dataset, IterableDataset, get_worker_info, DataLoader
-from torchvision.transforms import RandomCrop, RandomResizedCrop, CenterCrop, Resize
+from torchvision.transforms import Compose, RandomCrop, RandomResizedCrop, CenterCrop, Resize
 from torchvision.transforms.functional import crop
 
 
@@ -26,6 +27,13 @@ def get_patch_id(patch_fname):
     if patch_fname == "":
         return -1
     return int(patch_fname[-7:-4])
+
+
+def get_leaf_splits(labels_csv, num_splits, random_seed):
+    labels = pd.read_csv(labels_csv)["label"].values
+    folds = StratifiedKFold(n_splits=num_splits, shuffle=True, random_state=random_seed).split(
+        np.zeros(len(labels)), labels)
+    return folds
 
 
 class LeafIterableDataset(IterableDataset):
@@ -88,7 +96,10 @@ class LeafCollate(object):
         batch_idxs = torch.full((bs * self.max_samples_per_image,), -1)
         for i, (imgs, labels, idxs) in enumerate(batch):
             batch_imgs[(i*self.max_samples_per_image):(i*self.max_samples_per_image + imgs.shape[0]), :, :, :] = imgs
-            batch_labels[(i*self.max_samples_per_image):(i*self.max_samples_per_image + imgs.shape[0])] = labels
+            if labels is None:
+                batch_labels = None
+            else:
+                batch_labels[(i*self.max_samples_per_image):(i*self.max_samples_per_image + imgs.shape[0])] = labels
             batch_idxs[(i * self.max_samples_per_image):(i * self.max_samples_per_image + imgs.shape[0])] = idxs
         #_, n_samples, c, h, w = imgs.shape
         #n_pad = len(batch) * self.max_samples_per_image - n_samples
@@ -142,8 +153,28 @@ class LeafDataset(Dataset):
             if self.tiny:
                 self.fnames = self.fnames[:TINY_SIZE]
             self.labels = None
-        self.img_ids = [get_img_id(fname) for fname in self.fnames]
+        self.img_ids = np.array([get_img_id(fname) for fname in self.fnames])
         self.dataset_len = len(self.fnames)
+
+    @classmethod
+    def from_leaf_dataset(cls, leaf_dataset, subset, transform=None):
+        self = cls.__new__(cls)
+        self.img_dir = leaf_dataset.img_dir
+        self.transform = leaf_dataset.transform if transform is None else transform
+        self.tiny = leaf_dataset.tiny
+        self.fnames = leaf_dataset.fnames[subset]
+        self.labels = leaf_dataset.labels[subset]
+        if leaf_dataset.original_fnames is not None:
+            self.original_fnames = leaf_dataset.original_fnames[subset]
+            self.n_patches = leaf_dataset.n_patches[subset]
+        else:
+            self.original_fnames = None
+            self.n_patches = None
+        self.img_ids = leaf_dataset.img_ids[subset]
+        self.dataset_len = len(subset)
+
+        return self
+
 
     def __len__(self):
         return self.dataset_len
@@ -177,7 +208,7 @@ def test_colors(img, min_ratio=0.3, min_value=0.0, min_hue=40/360, max_hue=170/3
 
 
 class GetPatches(object):
-    def __init__(self, img_width, img_height, patch_size, test_colors=False, min_ratio=0.3, min_value=0.0, min_hue=40/360, max_hue=170/360, include_center=True):
+    def __init__(self, img_width, img_height, patch_size, test_colors=False, min_ratio=0.3, min_value=0.0, min_hue=40/360, max_hue=170/360, include_center=False):
         assert isinstance(img_width, (int, tuple))
         assert isinstance(img_height, (int, tuple))
         assert isinstance(patch_size, (int, tuple))
@@ -229,7 +260,7 @@ class TransformPatches(object):
         return [self.transform(patch) for patch in patches]
 
 
-class RandomGreen(object):
+class RandomGreenBase(object):
     def __init__(self, patch_size, min_ratio=0.3, min_value=0.0, min_hue=40 / 360, max_hue=170 / 360, keep_aspect_ratio=True):
         assert (min_ratio is None and min_value is None and min_hue is None and max_hue is None) or (
                     min_ratio is not None and min_value is not None and min_hue is not None and max_hue is not None)
@@ -243,18 +274,95 @@ class RandomGreen(object):
         else:
             self.random_crop = RandomResizedCrop(patch_size)
 
-        resize_size = 256 if patch_size == 224 else 436 if patch_size == 380 else "Error"
-        self.resize = Resize(resize_size)
-        self.center_crop = CenterCrop(patch_size)
+    def __call__(self, img):
+        cand = self.random_crop(img)
+        if (cand > -1).all() and test_colors(cand, self.min_ratio, self.min_value, self.min_hue, self.max_hue):
+            return cand
+        else:
+            return None
+
+
+class RandomInnerCrop(object):
+    def __init__(self, **params):
+        self.random_crop = RandomCrop(**params, pad_if_needed=True, fill=-1)
+
+    def __call__(self, img):
+        cand = self.random_crop(img)
+        while not ((cand > -1).all()):
+            cand = self.random_crop(img)
+        return cand
+
+
+class RandomGreen(object):
+    def __init__(self, patch_size, min_ratio=0.3, min_value=0.0, min_hue=40 / 360, max_hue=170 / 360, keep_aspect_ratio=True, default_center=False):
+        assert (min_ratio is None and min_value is None and min_hue is None and max_hue is None) or (
+                    min_ratio is not None and min_value is not None and min_hue is not None and max_hue is not None)
+        self.random_green_base = RandomGreenBase(patch_size, min_ratio, min_value, min_hue, max_hue, keep_aspect_ratio)
+
+        if default_center:
+            resize_size = 256 if patch_size == 224 else 436 if patch_size == 380 else "Error"
+            self.default_crop = Compose([Resize(resize_size), CenterCrop(patch_size)])
+        else:
+            if keep_aspect_ratio:
+                self.default_crop = RandomInnerCrop(patch_size)
+            else:
+                self.default_crop = RandomResizedCrop(patch_size)
 
     def __call__(self, img, max_tries=10):
-        cand = self.random_crop(img)
+        cand = self.random_green_base(img)
         tries = 0
-        while(not ((cand > -1).all() and test_colors(cand, self.min_ratio, self.min_value, self.min_hue, self.max_hue))):
+        while cand is None:
             if tries == max_tries:
-                cand = self.resize(cand)
-                cand = self.center_crop(cand)
-                return cand
-            cand = self.random_crop(img)
+                return self.default_crop(img)
+            cand = self.random_green_base(img)
             tries += 1
         return cand
+
+
+class GetRandomResizedCrops(object):
+    def __init__(self, num_crops, **params):
+        self.num_crops = num_crops
+        self.random_resized_crop = RandomResizedCrop(**params)
+
+    def __call__(self, img):
+        patches = []
+        for _ in range(self.num_crops):
+            patch = self.random_resized_crop(img)
+            patches.append(patch)
+        return patches
+
+
+class GetRandomCrops(object):
+    def __init__(self, num_crops, **params):
+        self.num_crops = num_crops
+        self.random_crop = RandomCrop(**params, pad_if_needed=True, fill=-1)
+
+    def __call__(self, img):
+        patches = []
+        for _ in range(self.num_crops):
+            cand = self.random_crop(img)
+            while (not ((cand > -1).all())):
+                cand = self.random_crop(img)
+            patches.append(cand)
+        return patches
+
+
+class RandomGreenCrops(object):
+    def __init__(self, num_crops, **params):
+        self.num_crops = num_crops
+        self.ramdom_green_base = RandomGreenBase(**params)
+
+    def __call__(self, img, max_tries=10):
+        patches = []
+        for _ in range(self.num_crops):
+            cand = self.ramdom_green_base(img)
+            while cand is None:
+                tries = 0
+                if tries == max_tries:
+                    get_random_crops = GetRandomCrops(self.num_crops - len(patches))
+                    patches.extend(get_random_crops(img))
+                    return patches
+                cand = self.random_crop(img)
+                tries += 1
+            patches.append(cand)
+        return patches

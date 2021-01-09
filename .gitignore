@@ -6,3 +6,9 @@ data/
 theirs/
 output/
 runs/
+chromedriver
+kaggle/
+*.pdf
+google-images-download/
+submission.csv
+

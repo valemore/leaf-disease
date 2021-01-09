@@ -22,7 +22,10 @@ num_classes = 5
 
 
 def path_maybe(pth):
-    return pth if isinstance(pth, str) else Path(pth)
+    if pth is None:
+        return None
+    assert isinstance(pth, (str, Path)), "Expected string or Path object!"
+    return Path(pth)
 
 
 def ema(ma, x, alpha, step):
@@ -59,7 +62,7 @@ def log_commit(fname):
         f.write(git_cmd_result.stdout.decode("utf-8"))
 
 class LeafModel(object):
-    def __init__(self, arch, model_prefix=None, output_dir=None, logging_dir=None, ragged_batches=False):
+    def __init__(self, arch, model_prefix=None, output_dir=None, logging_dir=None, ragged_batches=False, pretrained=True):
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self._model_prefix = model_prefix if model_prefix is not None else f"model_{datetime.now().strftime('%b%d_%H-%M-%S')}"
         self.output_top_dir = path_maybe(output_dir)
@@ -72,7 +75,7 @@ class LeafModel(object):
         self.scheduler = None
 
         #if arch in ["tf_efficientnet_b4_ns"]:
-        self.model = timm.create_model(model_name=arch, num_classes=num_classes, pretrained=True)
+        self.model = timm.create_model(model_name=arch, num_classes=num_classes, pretrained=pretrained)
         # else:
         #     raise Exception(f"Unknown architecture name {arch}!")
 
@@ -178,6 +181,11 @@ class LeafModel(object):
         if self.scheduler is not None:
             self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
+    def load_model_state_dict(self, fname):
+        model_state_dict = torch.load(fname)
+        self.model.load_state_dict(model_state_dict)
+        self.model = self.model.to(self.device)
+
 
 def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_steps=None, val_data_loader=None, save_at_log_steps=False, epoch_name="", max_steps=None, ema_steps=None):
     if log_steps is not None:
@@ -234,16 +242,16 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
             if isinstance(log_steps, int) and step % log_steps == 0:
                 print('Step %5d EMA train loss: %.3f, EMA train acc: %.3f' % (step, running_loss, running_acc))
                 if val_data_loader is not None:
-                    if data_loader.max_samples_per_image > 1:
+                    if val_data_loader.max_samples_per_image > 1:
                         val_loss, val_raw_acc, val_logits_mean_acc, val_probs_mean_acc = validate_one_epoch(leaf_model, val_data_loader)
-                        print(f"Validation after step %5d: loss {val_loss}, raw acc {val_raw_acc}, logits mean acc {val_logits_mean_acc}, probs mean acc {val_probs_mean_acc}")
+                        print(f"Validation after step {step}: loss {val_loss}, raw acc {val_raw_acc}, logits mean acc {val_logits_mean_acc}, probs mean acc {val_probs_mean_acc}")
                         tb_writer.add_scalar("loss/val", val_loss, step)
                         tb_writer.add_scalar("raw_acc/val", val_raw_acc, step)
                         tb_writer.add_scalar("logits_mean_acc/val", val_logits_mean_acc, step)
                         tb_writer.add_scalar("probs_mean_acc/val", val_probs_mean_acc, step)
                     else:
                         val_loss, val_acc = validate_one_epoch(leaf_model, val_data_loader)
-                        print(f"Validation after step %5d: loss {val_loss}, acc {val_acc}")
+                        print(f"Validation after step {step}: loss {val_loss}, acc {val_acc}")
                         tb_writer.add_scalar("loss/val", val_loss, step)
                         tb_writer.add_scalar("acc/val", val_acc, step)
 
@@ -267,7 +275,7 @@ def validate_one_epoch(leaf_model: LeafModel, data_loader):
         logits_all = torch.zeros((data_loader.num_padded_samples, 5), dtype=float, device=leaf_model.device)
         labels_all = torch.zeros((data_loader.num_padded_samples), dtype=int, device=leaf_model.device)
         if ensemble_patches:
-            img_ids = np.zeros(data_loader.num_padded_samples, dtype=int)
+            idxs_all = np.zeros(data_loader.num_padded_samples, dtype=int)
         #patch_ids = np.zeros(data_loader.num_padded_samples, dtype=int)
         i = 0
         for imgs, labels, idxs in tqdm(data_loader):
@@ -276,16 +284,20 @@ def validate_one_epoch(leaf_model: LeafModel, data_loader):
             bs = imgs.shape[0]
             logits_all[i:(i + bs), :] = leaf_model.model.forward(imgs)
             labels_all[i:(i + bs)] = labels
-            if ensemble_patches:
-                img_ids[i:(i + bs)] = np.array([data_loader.dataset.img_ids[idx] for idx in idxs])
+            idxs_all[i:(i + bs)] = idxs
             #patch_ids[i:(i + bs)] = np.array([get_patch_id(data_loader.dataset.fnames[idx]) for idx in idxs])
             i += bs
+
+        logits_all  = logits_all[:i]
+        labels_all = labels_all[:i]
+        idxs_all = idxs_all[:i]
 
         loss = leaf_model.loss_fn(logits_all, labels_all)
         raw_preds_all = logits_all.argmax(axis=-1)
         raw_acc = (labels_all == raw_preds_all).sum().item() / i
 
         if ensemble_patches:
+            img_ids = data_loader.dataset.img_ids[idxs_all]
             logits_df = pd.DataFrame({
                 "img_id": img_ids,
                 #"patch_idx": patch_ids,

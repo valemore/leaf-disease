@@ -69,4 +69,33 @@ Dec30_23-03-08
 
 
 ## Weight decay and learning rate (schedules)
-EfficientNet: RMSProp, 1e-5 weight decay and 0.264 learning rate that decays by ... every 2.4 epochs
+EfficientNet Paper: RMSProp, 1e-5 weight decay and 0.264 learning rate that decays by ... every 2.4 epochs
+
+# Jan 11
+- Review details / learning rate schedules / TTA from Bit Transfer, Vision Transformer, EfficientNet
+- Cosine strategy, what exactly is it
+- Balanced sampler
+- Better logging in Tensorflow (log hypterparameters)
+- Remove output from notebooks and commit them
+- Review training on central image
+- 5 Fold CV
+
+- All the LR papers
+
+# Green strat
+read hsv from disk
+
+# Combine green strat with augmentation (cutmix, mosaic strategy in wheat challenge)
+
+# Use SGD (non-adaptive) with schedule, it's better for fine-tuning (where's the paper?)
+
+# NEW PLAN
+Get basics right and be competitive with them.
+Train in Cloud.
+Maybe simplify codebase.
+
+The main
+difficulty in training a DNN is then associated with the scheduling of the learning rate and the
+amount of L2 weight decay regularization employed. 
+
+Snapmix adaptation? Mixing with null class?
