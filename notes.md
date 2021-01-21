@@ -1,73 +1,63 @@
-# Ideas
-## Download additional training images
-Search for cassava + disease (disease acronym?) on Google Images. \
-How to filter out some good ones, good quality and sizes? \
-Manually sift through them to discard bogus ones. \
+# HIGH PRIO
+## Validation strategy
+Is 5 fold really useful? Use my split, and then train on whole at the end.
+
+# Experiment learning rate, schedule, (and possibly weight decay for mid-sized model)
+Maybe b4?
+
+## Exampple parameters
+EfficientNet Paper: RMSProp, 1e-5 weight decay and 0.264 learning rate that decays by ... every 2.4 epochs
+
+Note the use of RMSProp instead of SGD. 
+
+# Augmentation with mid-sized model
+The regular ones
+SnapMix, or something similar.
+Mosaic strategy in wheat challenge?
+
+Custom ideas or approaches, mixed with the above
+
+# Pseudo Labeling / Something else or similar?
+
+# Gradient clipping
+
+# Better use of Tensorboard
+Better logging in Tensorboard (log hyperparameters)
+
+
+# LOW PRIO
+## Use some of my custom augmentation?
+If used: Read hsv from disk? Check first with profiler.
+Experiment with test_colors hyperparameters
+
+## Use additional training images from last competition
+
+## Use additional training images that were downloaded
+Manually sift through them.
 Compatible with Kaggle rules?
 
-## Augmentation
-What's the right way to do it?
-
-### Test-time augmentation
-
-### Sometimes leaf is only in one portion
-Could tackle with TTA or Multi-Stage model
-
-# Computer Vision Open Questions
-* What's the "best" baseline right now?
-* How to resize properly for the model? Keep aspect ratio and pad? Or distort aspect ratio?
-
-# Multi-Stage model?
-First detect/localize, then segment region?
-
-# Oversampling?
-
-# Old-school features
+## Old-school features
 Like HOG and so on. Check scikit-image for ready-to-use implementations.
 Other old-school features: SIFT, spatial pyramid, bag of visual words
 
-# Various notes
-* The average image resolution on ImageNet is 469x387 pixels.
-* Need to use image net normalization for timm's models?
-* Pooled or unpooled features for feature extractor?
-
-# EfficientNotes
-Where is the dropout?
-
-# Pre-Training
+## Pre-Training
 Pre-train on similar problem/dataset?
 
-# Cross-Validation, use whole training dataset
+# MID PRIO
+# Balanced sampling (check out the efficient net baseline notebook on Kaggle)
 
-# Different learning rates for different parts / freezing-unfreezing strategy?
 
-# Scheme for cropping at train / TTA
-Divide each image into 6 200x200 patches, rescale them to ImageNet size, do the other augmentations
-At train: Feed all patches (or only gree ones?)
-At test time: Only feed in "green" patches, have a vote among all, have a vote among only the disease classes
-(can play with thresholds here, e.g. minimum number of diseased patches required)
+# VARIOUS NOTES
+* The average image resolution on ImageNet is 469x387 pixels.
+* Need to use image net normalization for timm's models? Yes!
+* Pooled or unpooled features for feature extractor?
 
-# Vision Transformer
+## EfficientNet notes
+Where is the dropout?
 
-# Work on smaller image patches?
-Information is all there on a single leaf.
-Divide in patches, train only on green ones?
-Test time: Have a vote or minimum threshold?
+## Different learning rates for different parts / freezing-unfreezing strategy?
+I have not seen this in recent literature.
 
-Could work well with ViT?
+## Loss going up at start of a new epoch 
+Why does loss go up at start of new epoch? Too high learning rate, we forget a bit?
 
-Easy: Random crop 128x128, or smaller, or bigger
-
-# Investigate RandomResizedCrop, RandomCrop
-
-# Write own Dataloader, transformations to implement test time logic?
-
-# More transforms
-You could also yse CenterCrop 110 for your test dataset.
-
-Also FiveCrop 228 can give you additional performance gains, if runtime (averaging over the 5 crops) is not a major issue.
-
-# Kati points
-Double check green test, maybe check color statistics for different classes.
-Only some leaves might show the disease.
-Diseases can only be told apart by using different parts.

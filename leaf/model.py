@@ -1,5 +1,4 @@
 from datetime import datetime
-import logging
 import subprocess
 import time
 
@@ -15,7 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from leaf.dta import LeafDataLoader, get_img_id, get_patch_id
+from leaf.dta import LeafDataLoader, get_img_id
 
 
 num_classes = 5
@@ -62,22 +61,16 @@ def log_commit(fname):
         f.write(git_cmd_result.stdout.decode("utf-8"))
 
 class LeafModel(object):
-    def __init__(self, arch, model_prefix=None, output_dir=None, logging_dir=None, ragged_batches=False, pretrained=True):
+    def __init__(self, arch, model_prefix=None, output_dir=None, logging_dir=None, pretrained=True):
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self._model_prefix = model_prefix if model_prefix is not None else f"model_{datetime.now().strftime('%b%d_%H-%M-%S')}"
         self.output_top_dir = path_maybe(output_dir)
         self.logging_top_dir = path_maybe(logging_dir)
-        if not ragged_batches:
-            self.loss_fn = nn.CrossEntropyLoss().to(self.device)
-        else:
-            self.loss_fn = nn.CrossEntropyLoss(ignore_index=-1).to(self.device)
+        self.loss_fn = nn.CrossEntropyLoss().to(self.device)
         self.optimizer = None
         self.scheduler = None
 
-        #if arch in ["tf_efficientnet_b4_ns"]:
         self.model = timm.create_model(model_name=arch, num_classes=num_classes, pretrained=pretrained)
-        # else:
-        #     raise Exception(f"Unknown architecture name {arch}!")
 
     @property
     def model_prefix(self):
@@ -129,11 +122,6 @@ class LeafModel(object):
 
     def get_learning_rate(self):
         return self.optimizer.param_groups[0]["lr"]
-        # if self.scheduler is not None:
-        #     return self.scheduler.get_last_lr()[0]
-        # else:
-        #     return self.optimizer.param_groups[0]["lr"]
-
 
     def log_training(self, running_loss, training_acc, logging_steps, global_step, tb_writer):
         """Logs training error and f1 using tensorboard"""
@@ -199,11 +187,11 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
         leaf_model._prepare_logging()
         log_commit(leaf_model.logging_model_dir / "commit.txt")
         tb_writer = SummaryWriter(log_dir=leaf_model.logging_model_dir / logging_prefix)
-        if isinstance(log_steps, int):
-            alpha = 2.0 / (log_steps + 1)
-        else:
-            alpha = 2.0 / (ema_steps + 1)
-        #beta = min(1.0 - 1.0 / log_steps, 0.9)
+        if not isinstance(ema_steps, int):
+            assert isinstance(log_steps, int), "log_steps must be int if ema_steps is not given!"
+            ema_steps = log_steps
+        alpha = 2.0 / (ema_steps + 1)
+
         running_loss = None
         running_acc = None
 
@@ -237,23 +225,16 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
                 preds = logits.argmax(axis=-1)
                 acc = (preds == labels).sum().item() / preds.shape[0]
                 running_acc = ema(running_acc, acc, alpha, step)
-                leaf_model.log_training_ema(running_loss, running_acc, step, tb_writer)
+                if step >= ema_steps: # Only log in tensorboard once EMA is smooth
+                    leaf_model.log_training_ema(running_loss, running_acc, step, tb_writer)
 
             if isinstance(log_steps, int) and step % log_steps == 0:
                 print('Step %5d EMA train loss: %.3f, EMA train acc: %.3f' % (step, running_loss, running_acc))
                 if val_data_loader is not None:
-                    if val_data_loader.max_samples_per_image > 1:
-                        val_loss, val_raw_acc, val_logits_mean_acc, val_probs_mean_acc = validate_one_epoch(leaf_model, val_data_loader)
-                        print(f"Validation after step {step}: loss {val_loss}, raw acc {val_raw_acc}, logits mean acc {val_logits_mean_acc}, probs mean acc {val_probs_mean_acc}")
-                        tb_writer.add_scalar("loss/val", val_loss, step)
-                        tb_writer.add_scalar("raw_acc/val", val_raw_acc, step)
-                        tb_writer.add_scalar("logits_mean_acc/val", val_logits_mean_acc, step)
-                        tb_writer.add_scalar("probs_mean_acc/val", val_probs_mean_acc, step)
-                    else:
-                        val_loss, val_acc = validate_one_epoch(leaf_model, val_data_loader)
-                        print(f"Validation after step {step}: loss {val_loss}, acc {val_acc}")
-                        tb_writer.add_scalar("loss/val", val_loss, step)
-                        tb_writer.add_scalar("acc/val", val_acc, step)
+                    val_loss, val_acc = validate_one_epoch(leaf_model, val_data_loader)
+                    print(f"Validation after step {step}: loss {val_loss}, acc {val_acc}")
+                    tb_writer.add_scalar("loss/val", val_loss, step)
+                    tb_writer.add_scalar("acc/val", val_acc, step)
 
                 # Save model
                 if save_at_log_steps:
@@ -269,14 +250,10 @@ def softmax(x):
 
 
 def validate_one_epoch(leaf_model: LeafModel, data_loader):
-    ensemble_patches = data_loader.max_samples_per_image > 1
     leaf_model.model.eval()
     with torch.no_grad():
-        logits_all = torch.zeros((data_loader.num_padded_samples, 5), dtype=float, device=leaf_model.device)
-        labels_all = torch.zeros((data_loader.num_padded_samples), dtype=int, device=leaf_model.device)
-        if ensemble_patches:
-            idxs_all = np.zeros(data_loader.num_padded_samples, dtype=int)
-        #patch_ids = np.zeros(data_loader.num_padded_samples, dtype=int)
+        logits_all = torch.zeros((data_loader.dataset_len, 5), dtype=float, device=leaf_model.device)
+        labels_all = torch.zeros((data_loader.dataset_len), dtype=int, device=leaf_model.device)
         i = 0
         for imgs, labels, idxs in tqdm(data_loader):
             imgs = imgs.to(leaf_model.device)
@@ -284,54 +261,16 @@ def validate_one_epoch(leaf_model: LeafModel, data_loader):
             bs = imgs.shape[0]
             logits_all[i:(i + bs), :] = leaf_model.model.forward(imgs)
             labels_all[i:(i + bs)] = labels
-            idxs_all[i:(i + bs)] = idxs
-            #patch_ids[i:(i + bs)] = np.array([get_patch_id(data_loader.dataset.fnames[idx]) for idx in idxs])
             i += bs
 
         logits_all  = logits_all[:i]
         labels_all = labels_all[:i]
-        idxs_all = idxs_all[:i]
 
         loss = leaf_model.loss_fn(logits_all, labels_all)
-        raw_preds_all = logits_all.argmax(axis=-1)
-        raw_acc = (labels_all == raw_preds_all).sum().item() / i
+        preds_all = logits_all.argmax(axis=-1)
+        acc = (labels_all == preds_all).sum().item() / i
 
-        if ensemble_patches:
-            img_ids = data_loader.dataset.img_ids[idxs_all]
-            logits_df = pd.DataFrame({
-                "img_id": img_ids,
-                #"patch_idx": patch_ids,
-                "label": labels_all.cpu().numpy().astype(int),
-                "logits_0": logits_all.cpu().numpy()[:, 0],
-                "logits_1": logits_all.cpu().numpy()[:, 1],
-                "logits_2": logits_all.cpu().numpy()[:, 2],
-                "logits_3": logits_all.cpu().numpy()[:, 3],
-                "logits_4": logits_all.cpu().numpy()[:, 4]
-                # "raw_pred": raw_preds_all.cpu().numpy().astype(int)
-            })
-
-            logits_mean_df = logits_df.groupby("img_id").agg(
-                {"label": "first", "logits_0": "mean", "logits_1": "mean", "logits_2": "mean", "logits_3": "mean", "logits_4": "mean"}).reset_index()
-            logits_mean_preds = logits_mean_df.loc[:, ["logits_0", "logits_1", "logits_2", "logits_3", "logits_4"]].values.argmax(-1)
-            logits_mean_acc = (logits_mean_df["label"].values == logits_mean_preds).sum() / len(logits_mean_preds)
-
-            probs_df = pd.concat([logits_df.loc[:, ["img_id", "label"]],
-                                  pd.DataFrame(np.apply_along_axis(softmax, 1, logits_df.loc[:, ["logits_0", "logits_1", "logits_2", "logits_3", "logits_4"]].values))], axis=1)
-            probs_df.rename(columns={i: f"probs_{i}" for i in range(5)}, inplace=True)
-            probs_mean_df = probs_df.groupby("img_id").agg(
-                {"label": "first", "probs_0": "mean", "probs_1": "mean", "probs_2": "mean", "probs_3": "mean", "probs_4": "mean"}).reset_index()
-            probs_mean_preds = probs_mean_df.loc[:, ["probs_0", "probs_1", "probs_2", "probs_3", "probs_4"]].values.argmax(-1)
-            probs_mean_acc = (probs_mean_df["label"].values == probs_mean_preds).sum() / len(probs_mean_preds)
-
-            return loss, raw_acc, logits_mean_acc, probs_mean_acc
-
-        return loss, raw_acc
+        return loss, acc
 
 
-
-def warmup(leaf_model: LeafModel, data_loader: LeafDataLoader, n_steps, log_warmup=False):
-    tic = time.time()
-    print(f"Doing warmup for {n_steps} steps and learning rate {leaf_model.get_learning_rate()}")
-    train_one_epoch(leaf_model, data_loader, log_steps=n_steps, epoch_name=f"warmup_{datetime.now().strftime('%b%d_%H-%M-%S')}", max_steps=n_steps)
-    print(f"Warmed up for {n_steps} steps using learning rate {leaf_model.get_learning_rate()}, taking {(time.time() - tic):.1f} sec")
 

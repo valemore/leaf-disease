@@ -8,9 +8,9 @@ def predict(leaf_model: LeafModel, data_loader):
     ensemble_patches = data_loader.max_samples_per_image > 1
     leaf_model.model.eval()
     with torch.no_grad():
-        logits_all = torch.zeros((data_loader.num_padded_samples, 5), dtype=float, device=leaf_model.device)
+        logits_all = torch.zeros((data_loader.dataset_len, 5), dtype=float, device=leaf_model.device)
         if ensemble_patches:
-            idxs_all = np.zeros(data_loader.num_padded_samples, dtype=int)
+            idxs_all = np.zeros(data_loader.dataset_len, dtype=int)
         i = 0
         for imgs, _, idxs in tqdm(data_loader):
             imgs = imgs.to(leaf_model.device)
