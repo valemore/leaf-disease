@@ -1,3 +1,4 @@
+import contextlib
 from datetime import datetime
 import subprocess
 import time
@@ -12,7 +13,6 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.tensorboard import SummaryWriter
 
 from leaf.dta import LeafDataLoader, get_img_id
 
@@ -132,19 +132,19 @@ class LeafModel(object):
         tb_writer.add_scalar("acc/train", training_acc, global_step)
         tb_writer.add_scalar("lr", self.get_learning_rate(), global_step)
 
-    def log_training_ema(self, loss, acc, step, tb_writer, verbose=False):
+    def log_training_ema(self, loss, acc, step, neptune, verbose=False):
         if verbose:
             print('Step %5d EMA train loss: %.3f, EMA train acc: %.3f' %
                   (step, loss, acc))
-        tb_writer.add_scalar("loss/train", loss, step)
-        tb_writer.add_scalar("acc/train", acc, step)
-        tb_writer.add_scalar("lr", self.get_learning_rate(), step)
+        neptune.log_metric("loss/train", y=loss, x=step)
+        neptune.log_metric("acc/train", y=acc, x=step)
+        neptune.log_metric("lr", y=self.get_learning_rate(), x=step)
 
-    def log_validation(self, val_loss, val_acc, step, tb_writer, verbose=True):
+    def log_validation(self, val_loss, val_acc, step, neptune, verbose=True):
         if verbose:
             print("Validation after step %5d: val loss %.3f, val acc %.3f" % (step, val_loss, val_acc))
-        tb_writer.add_scalar("loss/val", val_loss, step)
-        tb_writer.add_scalar("acc/val", val_acc, step)
+        neptune.log_metric("loss/val", y=val_loss, x=step)
+        neptune.log_metric("acc/val", y=val_acc, x=step)
 
     def save_checkpoint(self, checkpoint_name, epoch=None, global_step=None, loss=None):
         self._prepare_output_dir()
@@ -175,18 +175,18 @@ class LeafModel(object):
         self.model = self.model.to(self.device)
 
 
-def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_steps=None, val_data_loader=None, save_at_log_steps=False, epoch_name="", max_steps=None, ema_steps=None):
+def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_steps=None, val_data_loader=None, save_at_log_steps=False, epoch_name="", max_steps=None, ema_steps=None, epoch=None, neptune=None, fp16=True):
     if log_steps is not None:
         leaf_model._prepare_logging()
     print(f"Training one epoch ({epoch_name}) with a total of {len(data_loader)} steps...")
 
     # Logging setup
     if log_steps:
-        logging_prefix = f"{epoch_name}"
-        #logging_prefix = f"{epoch_name}_{datetime.now().strftime('%b%d_%H-%M-%S')}"
+        assert neptune is not None, "Need to provide neptune for logging!"
+        if epoch is None:
+            epoch = 1 # Only for tensorboard logging
         leaf_model._prepare_logging()
         log_commit(leaf_model.logging_model_dir / "commit.txt")
-        tb_writer = SummaryWriter(log_dir=leaf_model.logging_model_dir / logging_prefix)
         if not isinstance(ema_steps, int):
             assert isinstance(log_steps, int), "log_steps must be int if ema_steps is not given!"
             ema_steps = log_steps
@@ -197,6 +197,9 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
 
     if save_at_log_steps:
         epoch_name = f"{datetime.now().strftime('%b%d_%H-%M-%S')}" if epoch_name == "" else epoch_name
+
+    if fp16:
+        scaler = torch.cuda.amp.GradScaler()
 
     leaf_model.model.train()
     leaf_model.model = leaf_model.model.to(leaf_model.device)
@@ -211,35 +214,45 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
 
         leaf_model.optimizer.zero_grad()
 
-        logits = leaf_model.model.forward(imgs)
-        loss = leaf_model.loss_fn(logits, labels)
-        loss.backward()
-        leaf_model.optimizer.step()
+        if fp16:
+            with torch.cuda.amp.autocast():
+                logits = leaf_model.model.forward(imgs)
+                loss = leaf_model.loss_fn(logits, labels)
+            scaler.scale(loss).backward()
+            scaler.step(leaf_model.optimizer)
+            scaler.update()
+        else:
+            logits = leaf_model.model.forward(imgs)
+            loss = leaf_model.loss_fn(logits, labels)
+            loss.backward()
+            leaf_model.optimizer.step()
+
         if leaf_model.scheduler is not None:
             leaf_model.scheduler.step()
 
         # Metrics and logging
         if log_steps:
+            log_step = len(data_loader) * (epoch - 1) + step
             with torch.no_grad():
                 running_loss = ema(running_loss, loss.mean().item(), alpha, step)
                 preds = logits.argmax(axis=-1)
                 acc = (preds == labels).sum().item() / preds.shape[0]
                 running_acc = ema(running_acc, acc, alpha, step)
                 if step >= ema_steps: # Only log in tensorboard once EMA is smooth
-                    leaf_model.log_training_ema(running_loss, running_acc, step, tb_writer)
+                    leaf_model.log_training_ema(running_loss, running_acc, log_step, neptune)
 
             if isinstance(log_steps, int) and step % log_steps == 0:
                 print('Step %5d EMA train loss: %.3f, EMA train acc: %.3f' % (step, running_loss, running_acc))
                 if val_data_loader is not None:
                     val_loss, val_acc = validate_one_epoch(leaf_model, val_data_loader)
-                    print(f"Validation after step {step}: loss {val_loss}, acc {val_acc}")
-                    tb_writer.add_scalar("loss/val", val_loss, step)
-                    tb_writer.add_scalar("acc/val", val_acc, step)
+                    print(f"Validation after step {step * epoch}: loss {val_loss}, acc {val_acc}")
+                    neptune.log_metric("loss/val", y=val_loss, x=log_step)
+                    neptune.log_metric("acc/val", y=val_acc, x=log_step)
 
                 # Save model
                 if save_at_log_steps:
                     checkpoint_name = f"checkpoint_{epoch_name}_{step}"
-                    leaf_model.save_checkpoint(checkpoint_name, epoch_name, step, running_loss)
+                    leaf_model.save_checkpoint(checkpoint_name, epoch_name, step * epoch, running_loss)
 
                 print(f"Time to step {step} took {(time.time() - tic):.1f} sec")
         step += 1

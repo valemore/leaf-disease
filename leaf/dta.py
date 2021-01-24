@@ -124,14 +124,14 @@ class LeafIterableDataset(IterableDataset):
 
 
 class LeafDataLoader(DataLoader):
-    def __init__(self, dset, batch_size, shuffle, num_workers=4, max_samples_per_image=1):
+    def __init__(self, dset, batch_size, shuffle, num_workers=4):
         if shuffle is not None:
             assert isinstance(dset, LeafDataset), "Setting shuffling to True or False only makes sense for map-style dataset!"
             super().__init__(dset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True)
         else:
             assert isinstance(dset, LeafIterableDataset), "Setting shuffling to none only makes sense for iterable dataset!"
             super().__init__(dset, batch_size=batch_size, num_workers=num_workers, pin_memory=True)
-        self.dataset_len = len(dset) * max_samples_per_image
+        self.dataset_len = len(dset)
         self.dataloader_len = ceil(len(dset) / batch_size)
 
     def __len__(self):
