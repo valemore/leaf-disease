@@ -5,6 +5,10 @@ Is 5 fold really useful? Use my split, and then train on whole at the end.
 # Experiment learning rate, schedule, (and possibly weight decay for mid-sized model)
 Maybe b4?
 
+# Localize relevant portions?
+Important for image size considerations?
+Look at dataset!
+
 ## Exampple parameters
 EfficientNet Paper: RMSProp, 1e-5 weight decay and 0.264 learning rate that decays by ... every 2.4 epochs
 

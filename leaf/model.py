@@ -15,9 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from leaf.dta import LeafDataLoader, get_img_id
-
-
-num_classes = 5
+from leaf.label_smoothing import TaylorCrossEntropyLoss
 
 
 def path_maybe(pth):
@@ -27,11 +25,10 @@ def path_maybe(pth):
     return Path(pth)
 
 
-def ema(ma, x, alpha, step):
+def ema(ma, x, alpha):
     if ma is None:
         return x
-    return (alpha * x + (1 - alpha) * ma) # / (1 - (1 - alpha) ** step)
-    #return (beta * v + (1 - beta) * x) / (1 - beta ** step)
+    return (alpha * x + (1 - alpha) * ma)
 
 
 def save_model(leaf_model, epoch_name, global_step, loss, fname):
@@ -61,16 +58,15 @@ def log_commit(fname):
         f.write(git_cmd_result.stdout.decode("utf-8"))
 
 class LeafModel(object):
-    def __init__(self, arch, model_prefix=None, output_dir=None, logging_dir=None, pretrained=True):
+    def __init__(self, CFG, model_prefix=None, output_dir=None, pretrained=True):
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        self._model_prefix = model_prefix if model_prefix is not None else f"model_{datetime.now().strftime('%b%d_%H-%M-%S')}"
+        self._model_prefix = model_prefix if model_prefix is not None else f"{CFG.arch}_hero_{datetime.now().strftime('%b%d_%H-%M-%S')}"
         self.output_top_dir = path_maybe(output_dir)
-        self.logging_top_dir = path_maybe(logging_dir)
         self.loss_fn = nn.CrossEntropyLoss().to(self.device)
         self.optimizer = None
         self.scheduler = None
 
-        self.model = timm.create_model(model_name=arch, num_classes=num_classes, pretrained=pretrained)
+        self.model = timm.create_model(model_name=CFG.arch, num_classes=CFG.num_classes, pretrained=pretrained)
 
     @property
     def model_prefix(self):
@@ -80,7 +76,6 @@ class LeafModel(object):
     def model_prefix(self, value):
         self._model_prefix = value
         self.output_model_dir = self.output_top_dir / self.model_prefix
-        self.logging_model_dir = self.logging_top_dir / self.model_prefix
 
     @property
     def output_top_dir(self):
@@ -94,26 +89,9 @@ class LeafModel(object):
         else:
             self.output_model_dir = None
 
-    @property
-    def logging_top_dir(self):
-        return self._logging_top_dir
-
-    @logging_top_dir.setter
-    def logging_top_dir(self, value):
-        self._logging_top_dir = value
-        if self._logging_top_dir is not None:
-            self.logging_model_dir = self._logging_top_dir / self._model_prefix
-        else:
-            self.logging_model_dir = None
-
     def update_optimizer_scheduler(self, optimizer, scheduler):
         self.optimizer = optimizer
         self.scheduler = scheduler
-
-    def _prepare_logging(self):
-        assert self.logging_model_dir is not None, "Logging directory is not defined!"
-        self.logging_top_dir.mkdir(exist_ok=True)
-        self.logging_model_dir.mkdir(exist_ok=True)
 
     def _prepare_output_dir(self):
         assert self.output_model_dir is not None, "Output directory is not defined!"
@@ -123,22 +101,16 @@ class LeafModel(object):
     def get_learning_rate(self):
         return self.optimizer.param_groups[0]["lr"]
 
-    def log_training(self, running_loss, training_acc, logging_steps, global_step, tb_writer):
-        """Logs training error and f1 using tensorboard"""
-        logging_loss, logging_acc = running_loss / logging_steps, training_acc / logging_steps
-        print('Step %5d running train loss: %.3f, running train acc: %.3f' %
-              (global_step, logging_loss, training_acc))
-        tb_writer.add_scalar("loss/train", logging_loss, global_step)
-        tb_writer.add_scalar("acc/train", training_acc, global_step)
-        tb_writer.add_scalar("lr", self.get_learning_rate(), global_step)
-
-    def log_training_ema(self, loss, acc, step, neptune, verbose=False):
+    def log_training_ema(self, loss, acc, gn, step, neptune, verbose=False):
         if verbose:
-            print('Step %5d EMA train loss: %.3f, EMA train acc: %.3f' %
-                  (step, loss, acc))
+            print('Step %5d EMA train loss: %.3f, train acc: %.3f, grad norm %.3f' %
+                  (step, loss, acc, gn))
         neptune.log_metric("loss/train", y=loss, x=step)
         neptune.log_metric("acc/train", y=acc, x=step)
         neptune.log_metric("lr", y=self.get_learning_rate(), x=step)
+        if gn is not None:
+            neptune.log_metric("grad", y=gn, x=step)
+
 
     def log_validation(self, val_loss, val_acc, step, neptune, verbose=True):
         if verbose:
@@ -175,18 +147,15 @@ class LeafModel(object):
         self.model = self.model.to(self.device)
 
 
-def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_steps=None, val_data_loader=None, save_at_log_steps=False, epoch_name="", max_steps=None, ema_steps=None, epoch=None, neptune=None, fp16=True):
-    if log_steps is not None:
-        leaf_model._prepare_logging()
+def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_steps=None, val_data_loader=None, save_at_log_steps=False, epoch_name="", max_steps=None, ema_steps=None, epoch=None, neptune=None, fp16=True, grad_norm=None):
     print(f"Training one epoch ({epoch_name}) with a total of {len(data_loader)} steps...")
+    if epoch is None:
+        epoch = 1
+
+    loss_list, acc_list = [], []
 
     # Logging setup
     if log_steps:
-        assert neptune is not None, "Need to provide neptune for logging!"
-        if epoch is None:
-            epoch = 1 # Only for tensorboard logging
-        leaf_model._prepare_logging()
-        log_commit(leaf_model.logging_model_dir / "commit.txt")
         if not isinstance(ema_steps, int):
             assert isinstance(log_steps, int), "log_steps must be int if ema_steps is not given!"
             ema_steps = log_steps
@@ -194,6 +163,8 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
 
         running_loss = None
         running_acc = None
+        running_gn = None
+        gn = None
 
     if save_at_log_steps:
         epoch_name = f"{datetime.now().strftime('%b%d_%H-%M-%S')}" if epoch_name == "" else epoch_name
@@ -219,12 +190,16 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
                 logits = leaf_model.model.forward(imgs)
                 loss = leaf_model.loss_fn(logits, labels)
             scaler.scale(loss).backward()
+            if grad_norm is not None:
+                gn = torch.nn.utils.clip_grad_norm_(leaf_model.model.parameters(), grad_norm)
             scaler.step(leaf_model.optimizer)
             scaler.update()
         else:
             logits = leaf_model.model.forward(imgs)
             loss = leaf_model.loss_fn(logits, labels)
             loss.backward()
+            if grad_norm is not None:
+                gn = torch.nn.utils.clip_grad_norm_(leaf_model.model.parameters(), grad_norm)
             leaf_model.optimizer.step()
 
         if leaf_model.scheduler is not None:
@@ -234,20 +209,24 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
         if log_steps:
             log_step = len(data_loader) * (epoch - 1) + step
             with torch.no_grad():
-                running_loss = ema(running_loss, loss.mean().item(), alpha, step)
+                running_loss = ema(running_loss, loss.mean().item(), alpha)
                 preds = logits.argmax(axis=-1)
                 acc = (preds == labels).sum().item() / preds.shape[0]
-                running_acc = ema(running_acc, acc, alpha, step)
-                if step >= ema_steps: # Only log in tensorboard once EMA is smooth
-                    leaf_model.log_training_ema(running_loss, running_acc, log_step, neptune)
+                running_acc = ema(running_acc, acc, alpha)
+                loss_list.append(running_loss)
+                acc_list.append(running_acc)
+                running_gn = ema(running_gn, gn, alpha)
+                if neptune is not None and step >= ema_steps: # Only log in neptune once EMA is smooth enough
+                    leaf_model.log_training_ema(running_loss, running_acc, running_gn, log_step, neptune)
 
             if isinstance(log_steps, int) and step % log_steps == 0:
                 print('Step %5d EMA train loss: %.3f, EMA train acc: %.3f' % (step, running_loss, running_acc))
                 if val_data_loader is not None:
                     val_loss, val_acc = validate_one_epoch(leaf_model, val_data_loader)
                     print(f"Validation after step {step * epoch}: loss {val_loss}, acc {val_acc}")
-                    neptune.log_metric("loss/val", y=val_loss, x=log_step)
-                    neptune.log_metric("acc/val", y=val_acc, x=log_step)
+                    if neptune is not None:
+                        neptune.log_metric("loss/val", y=val_loss, x=log_step)
+                        neptune.log_metric("acc/val", y=val_acc, x=log_step)
 
                 # Save model
                 if save_at_log_steps:
@@ -256,6 +235,8 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
 
                 print(f"Time to step {step} took {(time.time() - tic):.1f} sec")
         step += 1
+
+    return loss_list, acc_list # can be empty
 
 
 def softmax(x):

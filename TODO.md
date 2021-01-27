@@ -63,3 +63,18 @@ Maybe treat the strange images with few leaf patches differently?
 
 # Properly validate augs
 on/off runs
+
+# Some other lr policy
+warmup, restarts something, its on Kaggle
+
+# Dealing with label noise
+
+# dropout in the context of images?
+
+# variant loss functions
+
+# autoaugment
+
+# mixup paper
+
+# global avg pooling, experiment with heads
