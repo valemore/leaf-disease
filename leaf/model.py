@@ -62,7 +62,10 @@ class LeafModel(object):
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self._model_prefix = model_prefix if model_prefix is not None else f"{CFG.arch}_hero_{datetime.now().strftime('%b%d_%H-%M-%S')}"
         self.output_top_dir = path_maybe(output_dir)
-        self.loss_fn = nn.CrossEntropyLoss().to(self.device)
+        if CFG.loss_fn == "CrossEntropyLoss":
+            self.loss_fn = nn.CrossEntropyLoss().to(self.device)
+        elif CFG.loss_fn == "TaylorCrossEntropyLoss":
+            self.loss_fn = TaylorCrossEntropyLoss(smoothing=CFG.smoothing, target_size=CFG.num_classes).to(self.device)
         self.optimizer = None
         self.scheduler = None
 

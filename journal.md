@@ -11,4 +11,5 @@ Heroseo uses resnext50_32x4d and tf_efficientnet_b3_ns
 
 - When chaining learning rate schedulers, updating the optimizer can be tricky, including updating the momentum.
 
-- 
+- FP16 can lead to underflows or overflows, caught it when trying gradient clipping.
+
