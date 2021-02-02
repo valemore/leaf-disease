@@ -16,6 +16,7 @@ import torch.nn.functional as F
 
 from leaf.dta import LeafDataLoader, get_img_id
 from leaf.label_smoothing import TaylorCrossEntropyLoss
+from leaf.cutmix_utils import CutMixCrossEntropyLoss
 
 
 def path_maybe(pth):
@@ -62,10 +63,14 @@ class LeafModel(object):
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self._model_prefix = model_prefix if model_prefix is not None else f"{CFG.arch}_hero_{datetime.now().strftime('%b%d_%H-%M-%S')}"
         self.output_top_dir = path_maybe(output_dir)
+        self.acc_logging = True
         if CFG.loss_fn == "CrossEntropyLoss":
             self.loss_fn = nn.CrossEntropyLoss().to(self.device)
         elif CFG.loss_fn == "TaylorCrossEntropyLoss":
             self.loss_fn = TaylorCrossEntropyLoss(smoothing=CFG.smoothing, target_size=CFG.num_classes).to(self.device)
+        elif CFG.loss_fn == "CutMixCrossEntropyLoss":
+            self.loss_fn = CutMixCrossEntropyLoss().to(self.device)
+            self.acc_logging = False
         self.optimizer = None
         self.scheduler = None
 
@@ -101,16 +106,20 @@ class LeafModel(object):
         self.output_top_dir.mkdir(exist_ok=True)
         self.output_model_dir.mkdir(exist_ok=True)
 
-    def get_learning_rate(self):
-        return self.optimizer.param_groups[0]["lr"]
+    def get_learning_rate_momentum(self):
+        return self.optimizer.param_groups[0]["lr"], self.optimizer.param_groups[0].get("momentum", None)
 
     def log_training_ema(self, loss, acc, gn, step, neptune, verbose=False):
         if verbose:
             print('Step %5d EMA train loss: %.3f, train acc: %.3f, grad norm %.3f' %
-                  (step, loss, acc, gn))
+                  (step, loss, acc if acc is not None else -1.0, gn))
         neptune.log_metric("loss/train", y=loss, x=step)
-        neptune.log_metric("acc/train", y=acc, x=step)
-        neptune.log_metric("lr", y=self.get_learning_rate(), x=step)
+        if acc is not None:
+            neptune.log_metric("acc/train", y=acc, x=step)
+        lr, momentum = self.get_learning_rate_momentum()
+        neptune.log_metric("lr", y=lr, x=step)
+        if momentum is not None:
+            neptune.log_metric("momentum", y=momentum, x=step)
         if gn is not None:
             neptune.log_metric("grad", y=gn, x=step)
 
@@ -174,17 +183,25 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
 
     if fp16:
         scaler = torch.cuda.amp.GradScaler()
+        input_dtype = torch.half
+    else:
+        input_dtype = torch.float
+
+    if isinstance(leaf_model.loss_fn, CutMixCrossEntropyLoss):
+        label_dtype = torch.half if fp16 else torch.float
+    else:
+        label_dtype = torch.long
 
     leaf_model.model.train()
     leaf_model.model = leaf_model.model.to(leaf_model.device)
     step = 1
 
     tic = time.time()
-    for imgs, labels, idxs in tqdm(data_loader):
+    for imgs, labels, _ in tqdm(data_loader):
         if max_steps and step > max_steps:
             break
-        imgs = imgs.to(leaf_model.device, non_blocking=True)
-        labels = labels.to(leaf_model.device, non_blocking=True)
+        imgs = imgs.to(leaf_model.device, dtype=input_dtype, non_blocking=True)
+        labels = labels.to(leaf_model.device, dtype=label_dtype, non_blocking=True)
 
         leaf_model.optimizer.zero_grad()
 
@@ -214,16 +231,17 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
             with torch.no_grad():
                 running_loss = ema(running_loss, loss.mean().item(), alpha)
                 preds = logits.argmax(axis=-1)
-                acc = (preds == labels).sum().item() / preds.shape[0]
-                running_acc = ema(running_acc, acc, alpha)
                 loss_list.append(running_loss)
-                acc_list.append(running_acc)
+                if leaf_model.acc_logging:
+                    acc = (preds == labels).sum().item() / preds.shape[0]
+                    running_acc = ema(running_acc, acc, alpha)
+                    acc_list.append(running_acc)
                 running_gn = ema(running_gn, gn, alpha)
                 if neptune is not None and step >= ema_steps: # Only log in neptune once EMA is smooth enough
                     leaf_model.log_training_ema(running_loss, running_acc, running_gn, log_step, neptune)
 
             if isinstance(log_steps, int) and step % log_steps == 0:
-                print('Step %5d EMA train loss: %.3f, EMA train acc: %.3f' % (step, running_loss, running_acc))
+                print('Step %5d EMA train loss: %.3f, EMA train acc: %.3f' % (step, running_loss, running_acc if running_acc is not None else -1.0))
                 if val_data_loader is not None:
                     val_loss, val_acc = validate_one_epoch(leaf_model, val_data_loader)
                     print(f"Validation after step {step * epoch}: loss {val_loss}, acc {val_acc}")

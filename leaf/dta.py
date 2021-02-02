@@ -10,6 +10,8 @@ from torch.utils.data import Dataset, IterableDataset, get_worker_info, DataLoad
 
 import cv2
 
+from leaf.cutmix import CutMix
+
 TINY_SIZE = 100
 
 
@@ -126,7 +128,7 @@ class LeafIterableDataset(IterableDataset):
 class LeafDataLoader(DataLoader):
     def __init__(self, dset, batch_size, shuffle, num_workers=4):
         if shuffle is not None:
-            assert isinstance(dset, LeafDataset), "Setting shuffling to True or False only makes sense for map-style dataset!"
+            assert isinstance(dset, LeafDataset) or isinstance(dset, CutMix), "Setting shuffling to True or False only makes sense for map-style dataset!"
             super().__init__(dset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True)
         else:
             assert isinstance(dset, LeafIterableDataset), "Setting shuffling to none only makes sense for iterable dataset!"
