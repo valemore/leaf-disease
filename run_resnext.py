@@ -28,10 +28,8 @@ if __name__ == "__main__":
     @dataclass
     class CFG:
         num_classes: int = 5
-        img_size: int = 380
-        crop1_size: int = 560
-        crop2_range: int = 40
-        arch: str = "tf_efficientnet_b4_ns"
+        img_size: int = 256
+        arch: str = "resnext50_32x4d"
         loss_fn: str = "CrossEntropyLoss"
         smoothing: float = 0.00
 
@@ -44,37 +42,39 @@ if __name__ == "__main__":
 
     num_workers = 4
 
-    batch_size = 36
-    val_batch_size = 72
+    batch_size = 18 if on_gcp else 64
+    val_batch_size = 36 if on_gcp else 128
 
-    log_steps = 200
+    log_steps = 50 if on_gcp else 200
 
-    #max_lr = 0.015
-    max_lr = 0.05 # 3 * 0.06190499161193587
+    lr = 0.05
     weight_decay = 0.0
 
     grad_norm = None
     
     num_epochs = 7
 
-    train_transforms = A.Compose([
-        A.SmallestMaxSize(cfg.crop1_size),
-        A.RandomSizedCrop(min_max_height=(CFG.img_size - CFG.crop2_range, CFG.img_size + CFG.crop2_range), height=CFG.img_size, width=CFG.img_size),
-        A.RandomBrightnessContrast(brightness_limit=0.07, contrast_limit=0.07, p=1.0),
-        A.RGBShift(p=1.0),
-        A.GaussNoise(p=1.0),
-        A.HueSaturationValue(hue_shift_limit=0, sat_shift_limit=20, val_shift_limit=(-10, 20), p=1.0),
-        A.HorizontalFlip(p=0.5),
-        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
-        ToTensorV2()
-    ])
+    train_transforms = A.Compose(
+        [
+            A.Resize(CFG.img_size, CFG.img_size),
+            A.ShiftScaleRotate(rotate_limit=15, p=0.5),
+            A.RandomBrightnessContrast(brightness_limit=0.07, contrast_limit=0.07, p=1.0),
+            A.RGBShift(p=1.0),
+            A.HueSaturationValue(hue_shift_limit=0, sat_shift_limit=20, val_shift_limit=(-10, 20), p=1.0),
+            A.GaussNoise(p=1.0),
+            A.HorizontalFlip(p=0.5),
+            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
+            ToTensorV2()
+        ]
+    )
 
-    val_transforms = A.Compose([
-        A.SmallestMaxSize(cfg.crop1_size),
-        A.CenterCrop(CFG.img_size, CFG.img_size),
-        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
-        ToTensorV2()
-    ])
+    val_transforms = A.Compose(
+        [
+            A.Resize(CFG.img_size, CFG.img_size),
+            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
+            ToTensorV2()
+        ]
+    )
 
     train_dset = LeafDataset("data/stratified/train_images", "data/stratified/train_images/labels.csv", transform=train_transforms)
     val_dset = LeafDataset("data/stratified/val_images", "data/stratified/val_images/labels.csv", transform=val_transforms)
@@ -82,21 +82,19 @@ if __name__ == "__main__":
     train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     val_dataloader = LeafDataLoader(val_dset, batch_size=val_batch_size, shuffle=False, num_workers=num_workers)
 
-    model_prefix = f"{cfg.arch}_hero_{datetime.now().strftime('%b%d_%H-%M-%S')}"
+    model_prefix = f"{cfg.arch}_resnext_{datetime.now().strftime('%b%d_%H-%M-%S')}"
     leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
 
-    optimizer = Adam(leaf_model.model.parameters(), lr=max_lr, weight_decay=weight_decay)
-    #div_factor = max_lr / min_lr
-    scheduler = OneCycleLR(optimizer, epochs=num_epochs, steps_per_epoch=len(train_dataloader), max_lr=max_lr)
+    optimizer = Adam(leaf_model.model.parameters(), lr=lr, weight_decay=weight_decay)
+    scheduler = OneCycleLR(optimizer, epochs=num_epochs, steps_per_epoch=len(train_dataloader), max_lr=lr)
     leaf_model.update_optimizer_scheduler(optimizer, scheduler)
 
     neptune.init(project_qualified_name='vmorelli/leaf')
     params_dict = {
-        param: eval(param) for param in ["cfg", "train_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "weight_decay", "optimizer", "scheduler", "grad_norm"]
+        param: eval(param) for param in ["cfg", "train_transforms", "val_transforms", "batch_size", "num_epochs", "lr", "weight_decay", "optimizer", "scheduler", "grad_norm"]
     }
     neptune.create_experiment(name=model_prefix, params=params_dict, upload_source_files=['*.py', 'leaf/*.py', 'environment.yml'],
-                              description="GCP with Adam",
-                              tags=["gcp"])
+                              description="Local resnext run")
     str_params_dict = {p: str(pv) for p, pv in params_dict.items()}
     neptune.log_text("params", f"{json.dumps(str_params_dict)}")
 
@@ -108,6 +106,4 @@ if __name__ == "__main__":
         val_step = len(train_dataloader) * epoch
         neptune.log_metric("loss/val", y=val_loss, x=val_step)
         neptune.log_metric("acc/val", y=val_acc, x=val_step)
-        leaf_model.save_checkpoint(f"{epoch_name}", epoch=epoch)
-
-    neptune.stop()
+    leaf_model.save_checkpoint(f"{epoch_name}", epoch=epoch)

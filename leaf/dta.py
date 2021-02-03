@@ -10,15 +10,7 @@ from torch.utils.data import Dataset, IterableDataset, get_worker_info, DataLoad
 
 import cv2
 
-from leaf.cutmix import CutMix
-
 TINY_SIZE = 100
-
-
-def get_img_id(img_fname):
-    if img_fname == "":
-        return -1
-    return int(img_fname[:-4])
 
 
 def get_leaf_splits(labels_csv, num_splits, random_seed):
@@ -46,7 +38,6 @@ class LeafDataset(Dataset):
             if self.tiny:
                 self.fnames = self.fnames[:TINY_SIZE]
             self.labels = None
-        self.img_ids = np.array([get_img_id(fname) for fname in self.fnames])
         self.dataset_len = len(self.fnames)
 
     @classmethod
@@ -57,7 +48,6 @@ class LeafDataset(Dataset):
         self.tiny = leaf_dataset.tiny
         self.fnames = leaf_dataset.fnames[subset]
         self.labels = leaf_dataset.labels[subset]
-        self.img_ids = leaf_dataset.img_ids[subset]
         self.dataset_len = len(subset)
 
         return self
@@ -67,9 +57,9 @@ class LeafDataset(Dataset):
         return self.dataset_len
 
     def __getitem__(self, idx):
-        img = io.imread(self.img_dir / self.fnames[idx])
-        # img = cv2.imread(str(self.img_dir / self.fnames[idx]))
-        # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # img = io.imread(self.img_dir / self.fnames[idx])
+        img = cv2.imread(str(self.img_dir / self.fnames[idx]))
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         if self.transform:
             img = self.transform(image=img)["image"]
         if self.labels is not None:
@@ -79,60 +69,35 @@ class LeafDataset(Dataset):
         return img, label, idx
 
 
-class LeafIterableDataset(IterableDataset):
-    def __init__(self, img_dir, labels_csv=None, transform=None, tiny=False):
-        super().__init__()
-        self.img_dir = img_dir if isinstance(img_dir, Path) else Path(img_dir)
+class UnionDataSet(Dataset):
+    def __init__(self, one, two, transform=None):
+        assert (one.labels is None and two.labels is None) or (one.labels is not None and two.labels is not None)
+        self.one = one
+        self.two = two
         self.transform = transform
-        self.tiny = tiny
-        if labels_csv:
-            df = pd.read_csv(labels_csv)
-            if self.tiny:
-                df = df.iloc[:TINY_SIZE, :]
-            self.fnames = df["image_id"].values
-            self.labels = df["label"].values
-        else:
-            self.fnames = np.array([img.name for img in img_dir.glob("*.jpg")])
-            if self.tiny:
-                self.fnames = self.fnames[:TINY_SIZE]
-            self.labels = None
-        self.img_ids = [get_img_id(fname) for fname in self.fnames]
-        self.dataset_len = len(self.fnames)
+        self.dataset_len = len(one) + len(two)
+        self.one_len  = len(one)
+        self.two_len = len(two)
+        self.one_max  = len(one) - 1
+        self.two_max = len(two) - 1
 
     def __len__(self):
         return self.dataset_len
 
-    def __iter__(self):
-        worker_info = get_worker_info()
-        if worker_info is None:
-            iter_start = 0
-            iter_end = self.dataset_len
+    def __getitem__(self, idx):
+        if idx > self.one_max:
+            img, label, idx = self.two[idx - self.one_len]
+            img = self.transform(image=img)["image"]
+            return img, label, (1, idx)
         else:
-            per_worker = ceil(self.dataset_len / worker_info.num_workers)
-            worker_id = worker_info.id
-            iter_start = worker_id * per_worker
-            iter_end = min(self.dataset_len, iter_start + per_worker)
-        for idx in range(iter_start, iter_end):
-            img = io.imread(self.img_dir / self.fnames[idx])
-            # img = cv2.imread(str(self.img_dir / self.fnames[idx]))
-            # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            if self.transform:
-                img = self.transform(image=img)["image"]
-            if self.labels is not None:
-                label = self.labels[idx]
-            else:
-                label = None
-            yield img, label, idx
+            img, label, idx = self.one[idx]
+            img = self.transform(image=img)["image"]
+            return img, label, (0, idx)
 
 
 class LeafDataLoader(DataLoader):
     def __init__(self, dset, batch_size, shuffle, num_workers=4):
-        if shuffle is not None:
-            assert isinstance(dset, LeafDataset) or isinstance(dset, CutMix), "Setting shuffling to True or False only makes sense for map-style dataset!"
-            super().__init__(dset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True)
-        else:
-            assert isinstance(dset, LeafIterableDataset), "Setting shuffling to none only makes sense for iterable dataset!"
-            super().__init__(dset, batch_size=batch_size, num_workers=num_workers, pin_memory=True)
+        super().__init__(dset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True)
         self.dataset_len = len(dset)
         self.dataloader_len = ceil(len(dset) / batch_size)
 

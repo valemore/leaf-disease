@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from leaf.dta import LeafDataLoader, get_img_id
+from leaf.dta import LeafDataLoader
 from leaf.label_smoothing import TaylorCrossEntropyLoss
 from leaf.cutmix_utils import CutMixCrossEntropyLoss
 
