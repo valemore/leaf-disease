@@ -11,6 +11,7 @@ from torch.utils.data import Dataset, IterableDataset, get_worker_info, DataLoad
 import cv2
 
 TINY_SIZE = 100
+NUM_CLASSES = 5
 
 
 def get_leaf_splits(labels_csv, num_splits, random_seed):
@@ -50,8 +51,12 @@ class LeafDataset(Dataset):
         self.labels = leaf_dataset.labels[subset]
         self.dataset_len = len(subset)
 
-        return self
+        if isinstance(leaf_dataset, DistillationDataSet):
+            self.soft_labels = leaf_dataset.soft_labels[subset]
+            self.soft_ratio = leaf_dataset.soft_ratio
+            self.hard_labels = leaf_dataset.hard_labels[subset]
 
+        return self
 
     def __len__(self):
         return self.dataset_len
@@ -103,3 +108,38 @@ class LeafDataLoader(DataLoader):
 
     def __len__(self):
         return self.dataloader_len
+
+
+class DistillationDataSet(Dataset):
+    def __init__(self, dset, soft_targets_csv, soft_ratio=0.3):
+        self.dset = dset
+        df = pd.read_csv(soft_targets_csv)
+        self.soft_labels = df.iloc[:, 2:].values
+        self.soft_ratio = soft_ratio
+
+        self.img_dir = dset.img_dir
+        self.fnames = dset.fnames
+        self.hard_labels = dset.labels
+        self.dataset_len = len(self.dset)
+
+        if self.dset.tiny:
+            self.soft_labels = self.soft_labels[:len(self.dset), :]
+
+        assert len(self.soft_labels) == len(self.fnames)
+
+        hard_labels_oh = np.zeros((len(self.hard_labels), NUM_CLASSES))
+        for i, l in enumerate(self.hard_labels):
+            hard_labels_oh[i, l] = 1.0
+
+        self.labels = (1 - self.soft_ratio) * hard_labels_oh + self.soft_ratio * self.soft_labels
+
+        self.transform = None
+        self.tiny = self.dset.tiny
+
+    def __len__(self):
+        return self.dataset_len
+
+    def __getitem__(self, idx):
+        img, _, idx = self.dset[idx]
+        label = self.labels[idx]
+        return img, label, idx

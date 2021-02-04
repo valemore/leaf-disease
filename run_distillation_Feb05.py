@@ -10,10 +10,12 @@ import numpy as np
 from torch.optim import SGD, Adam
 
 from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet
-from leaf.model import LeafModel, train_one_epoch, validate_one_epoch
+from leaf.model import LeafModel, train_one_epoch, validate_one_epoch, validate_one_epoch_distillation
 from leaf.sched import get_warmup_scheduler
 from leaf.cutmix import CutMix
 from leaf.cutmix_utils import CutMixCrossEntropyLoss
+from leaf.dta import DistillationDataSet
+from leaf.dta import TINY_SIZE
 
 from torch.optim.lr_scheduler import OneCycleLR, CosineAnnealingWarmRestarts
 
@@ -29,13 +31,14 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "cutmix-folds"
+        description: str = "distillation-folds"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
         loss_fn: str = "CutMixCrossEntropyLoss"
         cutmix_prob: float = 0.5
         cutmix_num_mix: int = 2
+        soft_ratio: float = 0.3
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -49,10 +52,15 @@ if __name__ == "__main__":
     batch_size = 36 if on_gcp else 12
     val_batch_size = 72 if on_gcp else 24
 
+    debug = False
+    if debug:
+        batch_size = int(batch_size / 2)
+        val_batch_size = int(batch_size / 2)
+
     log_steps = 50 if on_gcp else 200
 
     #max_lr = 0.015
-    max_lr = 1e-2
+    max_lr = 0.025
     max_lr = 3 * max_lr if on_gcp else max_lr
     weight_decay = 0.0
     momentum = 0.9
@@ -84,7 +92,10 @@ if __name__ == "__main__":
     # folds = get_leaf_splits("./data/images/labels.csv", num_splits, random_seed=5293)
 
     dset_2020 = LeafDataset("data/images", "data/images/labels.csv", transform=None)
-    dset_2019 = LeafDataset("data/2019", "data/2019/labels.csv", transform=None)
+    dset_2019 = LeafDataset("data/2019", "data/2019/labels.csv", transform=None, tiny=debug)
+
+    dset_2020 = DistillationDataSet(dset_2020, "./data/theirs_soft_2020.csv", soft_ratio=cfg.soft_ratio)
+    dset_2019 = DistillationDataSet(dset_2019, "./data/theirs_soft_2019.csv", soft_ratio=cfg.soft_ratio)
 
     num_splits = 7
     folds = get_leaf_splits("./data/images/labels.csv", num_splits, random_seed=5293)
@@ -92,6 +103,10 @@ if __name__ == "__main__":
     for fold, (train_idxs, val_idxs) in enumerate(folds):
         if fold != 0:
             continue
+        if debug:
+            train_idxs = train_idxs[:TINY_SIZE]
+            val_idxs = val_idxs[:TINY_SIZE]
+
         fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
         pre_cutmix_train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
         train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=1.0, prob=CFG.cutmix_prob, num_mix=CFG.cutmix_num_mix, transform=post_cutmix_transforms)
@@ -113,8 +128,8 @@ if __name__ == "__main__":
             param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "weight_decay", "optimizer", "scheduler", "grad_norm"]
         }
         neptune.create_experiment(name=model_prefix, params=params_dict, upload_source_files=['*.py', 'leaf/*.py', 'environment.yml'],
-                                  description="Local run with new scheduler",
-                                  tags=[].extend(["gcp"] if on_gcp else []))
+                                  description="First try at distillation",
+                                  tags=[].extend(["gcp"] if on_gcp else []).extend(["dbg"] if debug else []))
         str_params_dict = {p: str(pv) for p, pv in params_dict.items()}
         neptune.log_text("params", f"{json.dumps(str_params_dict)}")
 
@@ -130,7 +145,7 @@ if __name__ == "__main__":
                 decay_epoch *= leaf_model.scheduler.T_mult
 
             train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, epoch=epoch, neptune=neptune, grad_norm=grad_norm)
-            val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
+            val_loss, val_acc = validate_one_epoch_distillation(leaf_model, val_dataloader)
             print(f"Validation after epoch {epoch}: loss {val_loss}, acc {val_acc}")
             val_step = len(train_dataloader) * epoch
             neptune.log_metric("loss/val", y=val_loss, x=val_step)

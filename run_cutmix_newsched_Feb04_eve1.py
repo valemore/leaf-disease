@@ -52,7 +52,7 @@ if __name__ == "__main__":
     log_steps = 50 if on_gcp else 200
 
     #max_lr = 0.015
-    max_lr = 1e-2
+    max_lr = 5e-2
     max_lr = 3 * max_lr if on_gcp else max_lr
     weight_decay = 0.0
     momentum = 0.9

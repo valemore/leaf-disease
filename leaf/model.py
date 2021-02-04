@@ -16,7 +16,7 @@ import torch.nn.functional as F
 
 from leaf.dta import LeafDataLoader
 from leaf.label_smoothing import TaylorCrossEntropyLoss
-from leaf.cutmix_utils import CutMixCrossEntropyLoss
+from leaf.cutmix_utils import CutMixCrossEntropyLoss, cross_entropy
 
 
 def path_maybe(pth):
@@ -287,5 +287,31 @@ def validate_one_epoch(leaf_model: LeafModel, data_loader):
 
         return loss, acc
 
+
+def validate_one_epoch_distillation(leaf_model: LeafModel, data_loader):
+    leaf_model.model.eval()
+    with torch.no_grad():
+        logits_all = torch.zeros((data_loader.dataset_len, 5), dtype=float, device=leaf_model.device)
+        labels_all = torch.zeros((data_loader.dataset_len, 5), dtype=float, device=leaf_model.device)
+        hard_labels_all = torch.zeros((data_loader.dataset_len,), dtype=int, device=leaf_model.device)
+        i = 0
+        for imgs, labels, idxs in tqdm(data_loader):
+            imgs = imgs.to(leaf_model.device)
+            labels = labels.to(leaf_model.device)
+            bs = imgs.shape[0]
+            logits_all[i:(i + bs), :] = leaf_model.model.forward(imgs)
+            labels_all[i:(i + bs), :] = labels
+            hard_labels_all[i:(i + bs)] = torch.tensor(data_loader.dataset.hard_labels[idxs], device=leaf_model.device)
+            i += bs
+
+        logits_all  = logits_all[:i]
+        labels_all = labels_all[:i]
+        hard_labels_all = hard_labels_all[:i]
+
+        loss = cross_entropy(logits_all, labels_all)
+        preds_all = logits_all.argmax(axis=-1)
+        acc = (hard_labels_all == preds_all).sum().item() / i
+
+        return loss, acc
 
 

@@ -4,6 +4,7 @@ import random
 from torch.utils.data.dataset import Dataset
 
 from leaf.cutmix_utils import onehot, rand_bbox
+from leaf.dta import UnionDataSet
 
 
 class CutMix(Dataset):
@@ -14,10 +15,18 @@ class CutMix(Dataset):
         self.beta = beta
         self.prob = prob
         self.transform = transform
+        if isinstance(dataset, UnionDataSet):
+            assert len(dataset.one.labels.shape) == len(dataset.two.labels.shape)
+            self.soft_targets = len(dataset.one.labels.shape) > 1
+        else:
+            self.soft_targets = len(dataset.labels.shape) > 1
 
     def __getitem__(self, index):
         img, lb, _ = self.dataset[index]
-        lb_onehot = onehot(self.num_class, lb)
+        if self.soft_targets:
+            lb_onehot = lb
+        else:
+            lb_onehot = onehot(self.num_class, lb)
 
         for _ in range(self.num_mix):
             r = np.random.rand(1)
@@ -29,7 +38,10 @@ class CutMix(Dataset):
             rand_index = random.choice(range(len(self)))
 
             img2, lb2, _ = self.dataset[rand_index]
-            lb2_onehot = onehot(self.num_class, lb2)
+            if self.soft_targets:
+                lb2_onehot = lb2
+            else:
+                lb2_onehot = onehot(self.num_class, lb2)
 
             bbx1, bby1, bbx2, bby2 = rand_bbox(img.size(), lam)
             img[:, bbx1:bbx2, bby1:bby2] = img2[:, bbx1:bbx2, bby1:bby2]
