@@ -37,8 +37,6 @@ if __name__ == "__main__":
         loss_fn: str = "CutMixCrossEntropyLoss"
         cutmix_prob: float = 0.5
         cutmix_num_mix: int = 2
-        crop1_size: int = 500
-        crop2_range: int = 80
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -59,20 +57,18 @@ if __name__ == "__main__":
 
     log_steps = 50 if on_gcp else 200
 
-    min_lr = 3 * 8.055822378718028e-4 if on_gcp else 8.055822378718028e-4
-    #max_lr = 0.015
     max_lr = 3 * 0.06190499161193587 if on_gcp else 0.06190499161193587
+    min_lr = 1e-4
     weight_decay = 0.0
     momentum = 0.95
 
     grad_norm = None
-    
-    num_epochs = 15
+
+    num_epochs = 30
 
     train_transforms = A.Compose([
-        A.SmallestMaxSize(cfg.crop1_size),
-        A.RandomSizedCrop(min_max_height=(cfg.img_size - cfg.crop2_range, cfg.img_size + cfg.crop2_range), height=cfg.crop1_size, width=cfg.crop1_size),
-        A.ShiftScaleRotate(shift_limit=0, scale_limit=0, rotate_limit=15, p=0.5),
+        A.Resize(CFG.img_size, CFG.img_size),
+        A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.5, rotate_limit=20),
         A.RandomBrightnessContrast(brightness_limit=0.07, contrast_limit=0.07, p=1.0),
         A.RGBShift(p=1.0),
         A.GaussNoise(p=1.0),
@@ -85,8 +81,7 @@ if __name__ == "__main__":
     post_cutmix_transforms = None
 
     val_transforms = A.Compose([
-        A.SmallestMaxSize(cfg.crop1_size),
-        A.CenterCrop(cfg.img_size, cfg.img_size),
+        A.Resize(CFG.img_size, CFG.img_size),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
         ToTensorV2()
     ])
@@ -128,7 +123,7 @@ if __name__ == "__main__":
             param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "min_lr", "max_lr", "weight_decay", "optimizer", "scheduler", "grad_norm"]
         }
         neptune.create_experiment(name=model_prefix, params=params_dict, upload_source_files=['*.py', 'leaf/*.py', 'environment.yml'],
-                                  description="Local run with merged dset and cutmix with random resize crop",
+                                  description="New schedule for local run with 2019+2020 dset",
                                   tags=([] + (["gcp"] if on_gcp else []) + (["dbg"] if debug else [])))
         str_params_dict = {p: str(pv) for p, pv in params_dict.items()}
         neptune.log_text("params", f"{json.dumps(str_params_dict)}")

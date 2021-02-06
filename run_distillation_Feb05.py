@@ -129,7 +129,7 @@ if __name__ == "__main__":
         }
         neptune.create_experiment(name=model_prefix, params=params_dict, upload_source_files=['*.py', 'leaf/*.py', 'environment.yml'],
                                   description="First try at distillation",
-                                  tags=[].extend(["gcp"] if on_gcp else []).extend(["dbg"] if debug else []))
+                                  tags=[].extend((["gcp"] if on_gcp else []) + (["dbg"] if debug else [])))
         str_params_dict = {p: str(pv) for p, pv in params_dict.items()}
         neptune.log_text("params", f"{json.dumps(str_params_dict)}")
 

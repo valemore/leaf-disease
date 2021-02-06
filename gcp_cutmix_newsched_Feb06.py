@@ -37,8 +37,6 @@ if __name__ == "__main__":
         loss_fn: str = "CutMixCrossEntropyLoss"
         cutmix_prob: float = 0.5
         cutmix_num_mix: int = 2
-        crop1_size: int = 500
-        crop2_range: int = 80
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -59,20 +57,18 @@ if __name__ == "__main__":
 
     log_steps = 50 if on_gcp else 200
 
-    min_lr = 3 * 8.055822378718028e-4 if on_gcp else 8.055822378718028e-4
     #max_lr = 0.015
-    max_lr = 3 * 0.06190499161193587 if on_gcp else 0.06190499161193587
+    max_lr = 0.1
     weight_decay = 0.0
-    momentum = 0.95
+    momentum = 0.9
 
     grad_norm = None
     
-    num_epochs = 15
+    num_epochs = 7
 
     train_transforms = A.Compose([
-        A.SmallestMaxSize(cfg.crop1_size),
-        A.RandomSizedCrop(min_max_height=(cfg.img_size - cfg.crop2_range, cfg.img_size + cfg.crop2_range), height=cfg.crop1_size, width=cfg.crop1_size),
-        A.ShiftScaleRotate(shift_limit=0, scale_limit=0, rotate_limit=15, p=0.5),
+        A.Resize(CFG.img_size, CFG.img_size),
+        A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.5, rotate_limit=20),
         A.RandomBrightnessContrast(brightness_limit=0.07, contrast_limit=0.07, p=1.0),
         A.RGBShift(p=1.0),
         A.GaussNoise(p=1.0),
@@ -85,8 +81,7 @@ if __name__ == "__main__":
     post_cutmix_transforms = None
 
     val_transforms = A.Compose([
-        A.SmallestMaxSize(cfg.crop1_size),
-        A.CenterCrop(cfg.img_size, cfg.img_size),
+        A.Resize(CFG.img_size, CFG.img_size),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
         ToTensorV2()
     ])
@@ -96,7 +91,7 @@ if __name__ == "__main__":
     dset_2020 = LeafDataset("data/images", "data/images/labels.csv", transform=None)
     dset_2019 = LeafDataset("data/2019", "data/2019/labels.csv", transform=None, tiny=debug)
 
-    num_splits = 5
+    num_splits = 7
     folds = get_leaf_splits("./data/images/labels.csv", num_splits, random_seed=5293)
 
     for fold, (train_idxs, val_idxs) in enumerate(folds):
@@ -118,23 +113,31 @@ if __name__ == "__main__":
         leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
 
         # optimizer = Adam(leaf_model.model.parameters(), lr=min_lr)
-        optimizer = SGD(leaf_model.model.parameters(), lr=min_lr, momentum=0.0, weight_decay=weight_decay)
-        div_factor = max_lr / min_lr
-        scheduler = OneCycleLR(optimizer, epochs=num_epochs, steps_per_epoch=len(train_dataloader), max_lr=max_lr, div_factor=div_factor)
+        optimizer = SGD(leaf_model.model.parameters(), lr=max_lr, momentum=momentum, weight_decay=weight_decay)
+        scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=len(train_dataloader), T_mult=2)
         leaf_model.update_optimizer_scheduler(optimizer, scheduler)
 
         neptune.init(project_qualified_name='vmorelli/leaf')
         params_dict = {
-            param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "min_lr", "max_lr", "weight_decay", "optimizer", "scheduler", "grad_norm"]
+            param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "weight_decay", "optimizer", "scheduler", "grad_norm"]
         }
         neptune.create_experiment(name=model_prefix, params=params_dict, upload_source_files=['*.py', 'leaf/*.py', 'environment.yml'],
-                                  description="Local run with merged dset and cutmix with random resize crop",
-                                  tags=([] + (["gcp"] if on_gcp else []) + (["dbg"] if debug else [])))
+                                  description="Local run with new scheduler",
+                                  tags=[].extend((["gcp"] if on_gcp else []) + (["dbg"] if debug else [])))
         str_params_dict = {p: str(pv) for p, pv in params_dict.items()}
         neptune.log_text("params", f"{json.dumps(str_params_dict)}")
 
+        decay_epoch = None
         for epoch in range(1, num_epochs+1):
             epoch_name = f"{model_prefix}-{epoch}"
+
+            if epoch == decay_epoch:
+                for pg in leaf_model.optimizer.param_groups:
+                    pg["lr"] /= 2
+                    pg["initial_lr"] /= 2
+                leaf_model.scheduler.base_lrs = [base_lr / 2 for base_lr in leaf_model.scheduler.base_lrs]
+                decay_epoch *= leaf_model.scheduler.T_mult
+
             train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, epoch=epoch, neptune=neptune, grad_norm=grad_norm)
             val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
             print(f"Validation after epoch {epoch}: loss {val_loss}, acc {val_acc}")
