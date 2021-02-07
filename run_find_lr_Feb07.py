@@ -123,13 +123,15 @@ if __name__ == "__main__":
             print(str_run_params)
             neptune.log_text("params", y=f"{json.dumps(run_params)}", x=lr)
 
-            train_losses, _ = train_one_epoch(leaf_model, train_dataloader, max_steps=max_steps, log_steps=log_steps, epoch_name=f"lr-finder_{json.dumps(run_params)}", grad_norm=grad_norm)
+            train_losses, _ = train_one_epoch(leaf_model, train_dataloader, max_steps=max_steps, log_steps=log_steps, epoch_name=f"lr-finder_{json.dumps(run_params)}", grad_norm=grad_norm, fp16=False)
             neptune.log_text("loss-history", y=f"{json.dumps(train_losses)}", x=lr)
             # neptune.log_text("acc-history", y=f"{json.dumps(train_accs)}", x=lr)
-            neptune.log_metric("loss/train", y=train_losses[-1], x=lr)
+            log_loss = 1000 if np.isnan(train_losses[-1]) else train_losses[-1]
+            neptune.log_metric("loss/train", y=log_loss, x=lr)
             # neptune.log_metric("acc/train", y=train_accs[-1], x=lr)
 
             val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
+            val_loss = 1000 if np.isnan(val_loss) else val_loss
             neptune.log_metric("loss/val", y=val_loss, x=lr)
             neptune.log_metric("acc/val", y=val_acc, x=lr)
             print(f"Validation loss {val_loss}, acc {val_acc}")
