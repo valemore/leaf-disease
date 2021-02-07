@@ -112,7 +112,7 @@ if __name__ == "__main__":
 
         # optimizer = Adam(leaf_model.model.parameters(), lr=min_lr)
         optimizer = SGD(leaf_model.model.parameters(), lr=max_lr, momentum=momentum, weight_decay=weight_decay)
-        scheduler = LambdaLR(optimizer, lr_lambda= lambda step: 0.99 ** step)
+        scheduler = LambdaLR(optimizer, lr_lambda= lambda step: 0.999 ** step)
         leaf_model.update_optimizer_scheduler(optimizer, scheduler)
 
         neptune.init(project_qualified_name='vmorelli/leaf')
