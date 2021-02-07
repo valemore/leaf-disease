@@ -11,7 +11,7 @@ from torch.optim import SGD, Adam
 
 from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet
 from leaf.model import LeafModel, train_one_epoch, validate_one_epoch
-from leaf.sched import get_warmup_scheduler
+from leaf.sched import get_warmup_scheduler, LinearLR
 from leaf.cutmix import CutMix
 from leaf.cutmix_utils import CutMixCrossEntropyLoss
 from leaf.dta import TINY_SIZE
@@ -56,13 +56,14 @@ if __name__ == "__main__":
     log_steps = 50 if on_gcp else 200
 
     #max_lr = 0.015
-    max_lr = 0.1
+    max_lr = 0.2
+    min_lr = 0.02
     weight_decay = 0.0
     momentum = 0.9
 
     grad_norm = None
     
-    num_epochs = 7
+    num_epochs = 5
 
     train_transforms = A.Compose([
         A.Resize(CFG.img_size, CFG.img_size),
@@ -112,7 +113,7 @@ if __name__ == "__main__":
 
         # optimizer = Adam(leaf_model.model.parameters(), lr=min_lr)
         optimizer = SGD(leaf_model.model.parameters(), lr=max_lr, momentum=momentum, weight_decay=weight_decay)
-        scheduler = LambdaLR(optimizer, lr_lambda= lambda step: 0.999 ** step)
+        scheduler = LinearLR(optimizer, start_lr=max_lr, stop_lr=min_lr, num_steps=num_epochs * len(train_dataloader))
         leaf_model.update_optimizer_scheduler(optimizer, scheduler)
 
         neptune.init(project_qualified_name='vmorelli/leaf')

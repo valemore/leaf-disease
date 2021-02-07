@@ -7,28 +7,30 @@ import random
 
 import numpy as np
 
-from torch.optim import SGD
+from torch.optim import SGD, Adam
 
 from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet
 from leaf.model import LeafModel, train_one_epoch, validate_one_epoch
+from leaf.sched import get_warmup_scheduler, LinearLR
 from leaf.cutmix import CutMix
 from leaf.cutmix_utils import CutMixCrossEntropyLoss
+from leaf.dta import TINY_SIZE
 
-import torch
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CyclicLR, OneCycleLR
+from torch.optim.lr_scheduler import OneCycleLR, CosineAnnealingWarmRestarts, CyclicLR, LambdaLR
 
 import neptune
 
 import albumentations as A
 from albumentations.pytorch.transforms import ToTensorV2
 
+
 if __name__ == "__main__":
     on_gcp = os.getcwd() == "/home/jupyter/leaf-disease"
-    print(f"Running lr finder on {'GCP' if on_gcp else 'local'} machine!")
+    print(f"Running on {'GCP' if on_gcp else 'local'} machine!")
 
     @dataclass
     class CFG:
-        description: str = "simple-lr-finder"
+        description: str = "simple"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
@@ -46,18 +48,22 @@ if __name__ == "__main__":
     batch_size = 36 if on_gcp else 12
     val_batch_size = 72 if on_gcp else 24
 
-    max_steps = 100
-    log_steps = 10
-    num_runs = 20
+    debug = False
+    if debug:
+        batch_size = int(batch_size / 2)
+        val_batch_size = int(batch_size / 2)
+
+    log_steps = 50 if on_gcp else 200
+
+    #max_lr = 0.015
+    max_lr = 0.2
+    min_lr = 0.02
+    weight_decay = 0.0
+    momentum = 0.9
 
     grad_norm = None
-
-    num_epochs = 1
-
-    min_lr = 0.01
-    max_lr = 1.0
-    weight_decay_list = [0.0]
-    momentum_list = [0.9]
+    
+    num_epochs = 5
 
     train_transforms = A.Compose([
         A.Resize(CFG.img_size, CFG.img_size),
@@ -81,16 +87,21 @@ if __name__ == "__main__":
     # folds = get_leaf_splits("./data/images/labels.csv", num_splits, random_seed=5293)
 
     dset_2020 = LeafDataset("data/images", "data/images/labels.csv", transform=None)
-    dset_2019 = LeafDataset("data/2019", "data/2019/labels.csv", transform=None)
+    dset_2019 = LeafDataset("data/2019", "data/2019/labels.csv", transform=None, tiny=debug)
 
-    num_splits = 5
+    num_splits = 7
     folds = get_leaf_splits("./data/images/labels.csv", num_splits, random_seed=5293)
 
     for fold, (train_idxs, val_idxs) in enumerate(folds):
         if fold != 0:
             continue
+        if debug:
+            train_idxs = train_idxs[:TINY_SIZE]
+            val_idxs = val_idxs[:TINY_SIZE]
+
         # fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
         # pre_cutmix_train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
+        # train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=1.0, prob=CFG.cutmix_prob, num_mix=CFG.cutmix_num_mix, transform=post_cutmix_transforms)
         train_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=train_transforms)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
@@ -98,45 +109,33 @@ if __name__ == "__main__":
         val_dataloader = LeafDataLoader(val_dset, batch_size=val_batch_size, shuffle=False, num_workers=num_workers)
 
         model_prefix = f"{cfg.arch}_{cfg.description}_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}"
+        leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
+
+        # optimizer = Adam(leaf_model.model.parameters(), lr=min_lr)
+        optimizer = SGD(leaf_model.model.parameters(), lr=max_lr, momentum=momentum, weight_decay=weight_decay)
+        scheduler = LambdaLR(optimizer, lr_lambda=lambda step: 0.999 ** step)
+        leaf_model.update_optimizer_scheduler(optimizer, scheduler)
 
         neptune.init(project_qualified_name='vmorelli/leaf')
-        global_params_dict = {
-                param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "min_lr", "max_lr", "weight_decay_list", "momentum_list", "grad_norm"]
+        params_dict = {
+            param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "weight_decay", "optimizer", "scheduler", "grad_norm"]
         }
-        neptune_tags = ["lr"]
-        neptune_tags.extend((["gcp"] if on_gcp else []))
-        neptune.create_experiment(name=model_prefix, params=global_params_dict, upload_source_files=['*.py', 'leaf/*.py', 'environment.yml'],
-                                      description="Learning rate finder",
-                                      tags=neptune_tags)
+        neptune_tags = []
+        neptune_tags.extend((["gcp"] if on_gcp else []) + (["dbg"] if debug else []))
+        neptune.create_experiment(name=model_prefix, params=params_dict, upload_source_files=['*.py', 'leaf/*.py', 'environment.yml'],
+                                  description="Local run with new scheduler",
+                                  tags=neptune_tags)
+        str_params_dict = {p: str(pv) for p, pv in params_dict.items()}
+        neptune.log_text("params", f"{json.dumps(str_params_dict)}")
 
-        for lr in np.linspace(min_lr, max_lr, num=num_runs):
-            momentum = random.choice(momentum_list)
-            weight_decay = random.choice(weight_decay_list)
-            run_params = {param: eval(param) for param in ["lr", "momentum", "weight_decay"]}
-
-            leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=None)
-
-            # optimizer = Adam(leaf_model.model.parameters(), lr=min_lr)
-            optimizer = SGD(leaf_model.model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
-            # scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=len(train_dataloader))
-            scheduler = None
-            leaf_model.update_optimizer_scheduler(optimizer, scheduler)
-
-            str_run_params = {p: str(pv) for p, pv in run_params.items()}
-            print(str_run_params)
-            neptune.log_text("params", y=f"{json.dumps(run_params)}", x=lr)
-
-            train_losses, _ = train_one_epoch(leaf_model, train_dataloader, max_steps=max_steps, log_steps=log_steps, epoch_name=f"lr-finder_{json.dumps(run_params)}", grad_norm=grad_norm)
-            neptune.log_text("loss-history", y=f"{json.dumps(train_losses)}", x=lr)
-            # neptune.log_text("acc-history", y=f"{json.dumps(train_accs)}", x=lr)
-            log_loss = 1000 if np.isnan(train_losses[-1]) else train_losses[-1]
-            neptune.log_metric("loss/train", y=log_loss, x=lr)
-            # neptune.log_metric("acc/train", y=train_accs[-1], x=lr)
-
+        for epoch in range(1, num_epochs+1):
+            epoch_name = f"{model_prefix}-{epoch}"
+            train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, epoch=epoch, neptune=neptune, grad_norm=grad_norm)
             val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
-            val_loss = 1000 if torch.isnan(val_loss) else val_loss
-            neptune.log_metric("loss/val", y=val_loss, x=lr)
-            neptune.log_metric("acc/val", y=val_acc, x=lr)
-            print(f"Validation loss {val_loss}, acc {val_acc}")
+            print(f"Validation after epoch {epoch}: loss {val_loss}, acc {val_acc}")
+            val_step = len(train_dataloader) * epoch
+            neptune.log_metric("loss/val", y=val_loss, x=val_step)
+            neptune.log_metric("acc/val", y=val_acc, x=val_step)
+            leaf_model.save_checkpoint(f"{epoch_name}", epoch=epoch)
 
         neptune.stop()
