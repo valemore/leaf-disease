@@ -101,8 +101,8 @@ class UnionDataSet(Dataset):
 
 
 class LeafDataLoader(DataLoader):
-    def __init__(self, dset, batch_size, shuffle, num_workers=4):
-        super().__init__(dset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True)
+    def __init__(self, dset, batch_size, shuffle, sampler=None, num_workers=4):
+        super().__init__(dset, batch_size=batch_size, shuffle=shuffle, sampler=sampler, num_workers=num_workers, pin_memory=True)
         self.dataset_len = len(dset)
         self.dataloader_len = ceil(len(dset) / batch_size)
 

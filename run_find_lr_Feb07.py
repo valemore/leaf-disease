@@ -46,8 +46,8 @@ if __name__ == "__main__":
     batch_size = 36 if on_gcp else 12
     val_batch_size = 72 if on_gcp else 24
 
-    max_steps = 100
-    log_steps = 10
+    max_steps = 100 if on_gcp else 300
+    log_steps = 10 if on_gcp else 30
     num_runs = 20
 
     grad_norm = None
