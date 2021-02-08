@@ -11,7 +11,7 @@ from torch.optim import SGD, Adam
 
 from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet
 from leaf.model import LeafModel, train_one_epoch, validate_one_epoch
-from leaf.sched import get_warmup_scheduler, LinearLR, fix_optimizer_lr
+from leaf.sched import get_warmup_scheduler, LinearLR, fix_optimizer
 from leaf.cutmix import CutMix
 from leaf.cutmix_utils import CutMixCrossEntropyLoss
 from leaf.dta import TINY_SIZE
@@ -157,7 +157,7 @@ if __name__ == "__main__":
 
                 warmup_steps = int(len(train_dataloader) * 0.2)
 
-                fix_optimizer_lr(leaf_model.optimizer, current_lr)
+                fix_optimizer(leaf_model.optimizer, current_lr, momentum)
                 scheduler = get_warmup_scheduler(leaf_model.optimizer, current_lr, max_lr, warmup_steps=warmup_steps)
                 leaf_model.update_optimizer_scheduler(leaf_model.optimizer, scheduler)
                 train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=f"{epoch_name}_warmup", steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm, max_steps=warmup_steps)
@@ -169,7 +169,7 @@ if __name__ == "__main__":
                 neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
                 leaf_model.save_checkpoint(f"{epoch_name}", epoch=f"{epoch_name}_warmup")
 
-                fix_optimizer_lr(leaf_model.optimizer, max_lr)
+                fix_optimizer(leaf_model.optimizer, max_lr, momentum)
                 scheduler = CosineAnnealingLR(leaf_model.optimizer, T_max=7 * len(train_dataloader), eta_min=min_lr)
                 leaf_model.update_optimizer_scheduler(leaf_model.optimizer, scheduler)
 
@@ -197,7 +197,7 @@ if __name__ == "__main__":
                 train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=1.0, prob=cutmix_prob, num_mix=cutmix_num_mix, transform=post_cutmix_transforms)
                 train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
-                fix_optimizer_lr(leaf_model.optimizer, current_lr)
+                fix_optimizer(leaf_model.optimizer, current_lr, momentum)
                 scheduler = get_warmup_scheduler(leaf_model.optimizer, current_lr, max_lr, warmup_steps=warmup_steps)
                 leaf_model.update_optimizer_scheduler(leaf_model.optimizer, scheduler)
                 train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=f"{epoch_name}_warmup", steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm, max_steps=warmup_steps)
@@ -209,7 +209,7 @@ if __name__ == "__main__":
                 neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
                 leaf_model.save_checkpoint(f"{epoch_name}", epoch=f"{epoch_name}_warmup")
 
-                fix_optimizer_lr(leaf_model.optimizer, max_lr)
+                fix_optimizer(leaf_model.optimizer, max_lr, momentum)
                 scheduler = CosineAnnealingLR(leaf_model.optimizer, T_max=7 * len(train_dataloader), eta_min=min_lr)
                 leaf_model.update_optimizer_scheduler(leaf_model.optimizer, scheduler)
 

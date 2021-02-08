@@ -31,7 +31,9 @@ def get_up_scheduler(optimizer, start_lr, stop_lr, n_steps):
     return scheduler
 
 
-def fix_optimizer_lr(optimizer, lr):
+def fix_optimizer(optimizer, lr, momentum=None):
     for pg in optimizer.param_groups:
         pg["lr"] = lr
         pg["initial_lr"] = lr
+        if momentum:
+            pg["momentum"]
