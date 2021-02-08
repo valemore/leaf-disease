@@ -141,7 +141,7 @@ if __name__ == "__main__":
                 print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
                 neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
                 neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
-                leaf_model.save_checkpoint(f"{epoch_name}", epoch=f"{epoch_name}")
+                leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}")
 
             if epoch == 8:
                 leaf_model.loss_fn = CutMixCrossEntropyLoss().to(leaf_model.device)
@@ -167,7 +167,7 @@ if __name__ == "__main__":
                 print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
                 neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
                 neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
-                leaf_model.save_checkpoint(f"{epoch_name}", epoch=f"{epoch_name}_warmup")
+                leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}_warmup")
 
                 fix_optimizer(leaf_model.optimizer, max_lr, momentum)
                 scheduler = CosineAnnealingLR(leaf_model.optimizer, T_max=7 * len(train_dataloader), eta_min=min_lr)
@@ -181,7 +181,7 @@ if __name__ == "__main__":
                 print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
                 neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
                 neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
-                leaf_model.save_checkpoint(f"{epoch_name}", epoch=f"{epoch_name}")
+                leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}")
 
             if epoch == 15:
                 cutmix_prob = 1.0
@@ -207,7 +207,7 @@ if __name__ == "__main__":
                 print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
                 neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
                 neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
-                leaf_model.save_checkpoint(f"{epoch_name}", epoch=f"{epoch_name}_warmup")
+                leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}_warmup")
 
                 fix_optimizer(leaf_model.optimizer, max_lr, momentum)
                 scheduler = CosineAnnealingLR(leaf_model.optimizer, T_max=7 * len(train_dataloader), eta_min=min_lr)
@@ -226,6 +226,6 @@ if __name__ == "__main__":
                 print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
                 neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
                 neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
-                leaf_model.save_checkpoint(f"{epoch_name}", epoch=f"{epoch_name}")
+                leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}")
 
         neptune.stop()

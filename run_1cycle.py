@@ -108,6 +108,6 @@ if __name__ == "__main__":
             val_step = len(train_dataloader) * epoch
             neptune.log_metric("loss/val", y=val_loss, x=val_step)
             neptune.log_metric("acc/val", y=val_acc, x=val_step)
-            leaf_model.save_checkpoint(f"{epoch_name}", epoch=epoch)
+            leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=epoch)
 
         neptune.stop()

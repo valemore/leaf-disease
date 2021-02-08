@@ -114,4 +114,4 @@ if __name__ == "__main__":
         tb_writer.add_scalar("loss/val", val_loss, val_step)
         tb_writer.add_scalar("acc/val", val_acc, val_step)
         tb_writer.close()
-        leaf_model.save_checkpoint(f"{epoch_name}", epoch=epoch)
+        leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=epoch)

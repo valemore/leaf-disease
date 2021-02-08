@@ -130,10 +130,10 @@ class LeafModel(object):
         neptune.log_metric("loss/val", y=val_loss, x=step)
         neptune.log_metric("acc/val", y=val_acc, x=step)
 
-    def save_checkpoint(self, checkpoint_name, epoch=None, global_step=None, loss=None):
+    def save_checkpoint(self, checkpoint_name, epoch_name=None, global_step=None, loss=None):
         self._prepare_output_dir()
         log_commit(self.output_model_dir / "commit.txt")
-        save_model(self, epoch, global_step, loss, self.output_model_dir / checkpoint_name)
+        save_model(self, epoch_name, global_step, loss, self.output_model_dir / checkpoint_name)
 
     def load_checkpoint(self, checkpoint_name):
         checkpoint = torch.load(self.output_model_dir / checkpoint_name)
