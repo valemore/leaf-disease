@@ -60,8 +60,8 @@ if __name__ == "__main__":
 
     log_steps = 50 if on_gcp else 200
 
-    min_lr = 1e-6
-    max_lr = 1e-4
+    max_lr = 1e-1
+    min_lr = 1e-4
 
     momentum = 0.9
     weight_decay = 0.0 # 1e-6
@@ -74,6 +74,7 @@ if __name__ == "__main__":
         A.Resize(CFG.img_size, CFG.img_size),
         A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.2, rotate_limit=90, p=1.0),
         A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
+        A.HueSaturationValue(hue_shift_limit=0.0, sat_shift_limit=20.0, val_shift_limit=10.0, p=1.0),
         A.RGBShift(p=1.0),
         A.HorizontalFlip(p=0.5),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
