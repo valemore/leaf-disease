@@ -33,7 +33,8 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "simple"
+        description: str = "simple-short, min_lr 1e-3"
+        model_fil: str = "tmp"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
@@ -61,14 +62,14 @@ if __name__ == "__main__":
     log_steps = 50 if on_gcp else 200
 
     max_lr = 0.05
-    min_lr = 1e-5
+    min_lr = 1e-3
 
     momentum = 0.9
-    weight_decay = 1e-6
+    weight_decay = 0.0
 
     grad_norm = None
     
-    num_epochs = 10
+    num_epochs = 5
 
     train_transforms = A.Compose([
         A.Resize(CFG.img_size, CFG.img_size),

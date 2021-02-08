@@ -33,7 +33,7 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "simple"
+        description: str = "simple-local"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
@@ -60,8 +60,8 @@ if __name__ == "__main__":
 
     log_steps = 50 if on_gcp else 200
 
-    max_lr = 0.05
-    min_lr = 1e-5
+    max_lr = 0.06
+    min_lr = 5e-6
 
     momentum = 0.9
     weight_decay = 1e-6
@@ -114,6 +114,7 @@ if __name__ == "__main__":
         model_prefix = f"{cfg.arch}_{cfg.description}_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}"
         leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
 
+        # optimizer = Adam(leaf_model.model.parameters(), lr=min_lr)
         optimizer = SGD(leaf_model.model.parameters(), lr=max_lr, momentum=momentum, weight_decay=weight_decay)
         # div_factor = max_lr / min_lr
         # scheduler = OneCycleLR(optimizer, epochs=num_epochs, steps_per_epoch=len(train_dataloader), max_lr=max_lr, div_factor=div_factor)

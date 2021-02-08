@@ -30,12 +30,12 @@ class CutMix(Dataset):
 
         for _ in range(self.num_mix):
             r = np.random.rand(1)
-            if self.beta <= 0 or r > self.prob:
+            if r > self.prob:
                 continue
 
             # generate mixed sample
             lam = np.random.beta(self.beta, self.beta)
-            rand_index = random.choice(range(len(self)))
+            rand_index = np.random.randint(0, len(self))
 
             img2, lb2, _ = self.dataset[rand_index]
             if self.soft_targets:

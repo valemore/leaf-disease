@@ -33,7 +33,8 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "simple"
+        description: str = "simple-local, min_lr 1e-3, max_lr 0.05"
+        model_file: str = "tmp"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
@@ -60,15 +61,15 @@ if __name__ == "__main__":
 
     log_steps = 50 if on_gcp else 200
 
+    min_lr = 1e-3
     max_lr = 0.05
-    min_lr = 1e-5
 
-    momentum = 0.9
-    weight_decay = 1e-6
+    weight_decay = 0.0
 
     grad_norm = None
-    
-    num_epochs = 10
+
+    # cutmix_start = 6
+    num_epochs = 7
 
     train_transforms = A.Compose([
         A.Resize(CFG.img_size, CFG.img_size),
@@ -114,10 +115,10 @@ if __name__ == "__main__":
         model_prefix = f"{cfg.arch}_{cfg.description}_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}"
         leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
 
-        optimizer = SGD(leaf_model.model.parameters(), lr=max_lr, momentum=momentum, weight_decay=weight_decay)
-        # div_factor = max_lr / min_lr
-        # scheduler = OneCycleLR(optimizer, epochs=num_epochs, steps_per_epoch=len(train_dataloader), max_lr=max_lr, div_factor=div_factor)
-        scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=num_epochs * len(train_dataloader) + 1, eta_min=min_lr)
+        # optimizer = Adam(leaf_model.model.parameters(), lr=min_lr)
+        optimizer = SGD(leaf_model.model.parameters(), lr=min_lr, momentum=0.0, weight_decay=weight_decay)
+        div_factor = max_lr / min_lr
+        scheduler = OneCycleLR(optimizer, epochs=num_epochs, steps_per_epoch=len(train_dataloader), max_lr=max_lr)
         leaf_model.update_optimizer_scheduler(optimizer, scheduler)
 
         neptune.init(project_qualified_name='vmorelli/leaf')
@@ -135,6 +136,22 @@ if __name__ == "__main__":
         steps_offset = 0
         for epoch in range(1, num_epochs+1):
             epoch_name = f"{model_prefix}-{epoch}"
+
+            # if epoch == cutmix_start:
+            #     leaf_model.loss_fn = CutMixCrossEntropyLoss().to(leaf_model.device)
+            #     leaf_model.acc_logging = False
+
+            #     cutmix_p = 0.1
+            #     cutmix_n = np.random.randint(2, 5)
+            #     train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=1.0, prob=cutmix_p, num_mix=cutmix_n, transform=post_cutmix_transforms)
+            #     train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+
+            # if epoch > cutmix_start:
+            #     cutmix_p = max(cutmix_p + 0.1, 0.5)
+            #     cutmix_n = np.random.randint(2, 5)
+            #     train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=1.0, prob=cutmix_p, num_mix=cutmix_n, transform=post_cutmix_transforms)
+            #     train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+
             train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
             steps_offset += len(train_dataloader)
             val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)

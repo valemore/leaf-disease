@@ -7,6 +7,7 @@ import random
 
 import numpy as np
 
+import torch
 from torch.optim import SGD, Adam
 
 from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet
@@ -24,22 +25,24 @@ import neptune
 import albumentations as A
 from albumentations.pytorch.transforms import ToTensorV2
 
+checkpoint_pth = Path('/mnt/hdd/leaf-disease-outputs/tf_efficientnet_b4_ns_cutmix again_fold0.Feb08_15-17-05/tf_efficientnet_b4_ns_cutmix again_fold0.Feb08_15-17-05-13')
+
 
 if __name__ == "__main__":
     on_gcp = os.getcwd() == "/home/jupyter/leaf-disease"
     print(f"Running on {'GCP' if on_gcp else 'local'} machine!")
 
-    seed_everything(5293)
+    seed_everything(5293+2021+1)
 
     @dataclass
     class CFG:
-        description: str = "simple"
+        description: str = "cutmix-cont"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
-        loss_fn: str = "CrossEntropyLoss"
-        # cutmix_prob: float = 0.5
-        # cutmix_num_mix: int = 2
+        loss_fn: str = "CutMixCrossEntropyLoss"
+        cutmix_prob: float = 0.75
+        cutmix_num_mix: int = 3
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -60,21 +63,17 @@ if __name__ == "__main__":
 
     log_steps = 50 if on_gcp else 200
 
-    max_lr = 0.05
-    min_lr = 1e-5
-
-    momentum = 0.9
-    weight_decay = 1e-6
-
     grad_norm = None
-    
-    num_epochs = 10
+
+    epochs_so_far = 15
+    cont_epochs = 15
+
+    min_lr = 1e-7
 
     train_transforms = A.Compose([
         A.Resize(CFG.img_size, CFG.img_size),
         A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.2, rotate_limit=90, p=1.0),
         A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
-        A.HueSaturationValue(hue_shift_limit=0.0, sat_shift_limit=20.0, val_shift_limit=10.0, p=1.0),
         A.RGBShift(p=1.0),
         A.HorizontalFlip(p=0.5),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
@@ -104,25 +103,34 @@ if __name__ == "__main__":
 
         fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
         pre_cutmix_train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
-        train_dset = pre_cutmix_train_dset
-        # train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=1.0, prob=CFG.cutmix_prob, num_mix=CFG.cutmix_num_mix, transform=post_cutmix_transforms)
+        train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=1.0, prob=CFG.cutmix_prob, num_mix=CFG.cutmix_num_mix, transform=post_cutmix_transforms)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
         val_dataloader = LeafDataLoader(val_dset, batch_size=val_batch_size, shuffle=False, num_workers=num_workers)
 
         model_prefix = f"{cfg.arch}_{cfg.description}_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}"
-        leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
+        leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir, pretrained=False)
+        optimizer = SGD(leaf_model.model.parameters(), lr=0.0, momentum=0.0, weight_decay=0.0)
+        leaf_model.update_optimizer_scheduler(optimizer, None)
+        leaf_model.load_checkpoint_from_file(checkpoint_pth)
 
-        optimizer = SGD(leaf_model.model.parameters(), lr=max_lr, momentum=momentum, weight_decay=weight_decay)
-        # div_factor = max_lr / min_lr
-        # scheduler = OneCycleLR(optimizer, epochs=num_epochs, steps_per_epoch=len(train_dataloader), max_lr=max_lr, div_factor=div_factor)
-        scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=num_epochs * len(train_dataloader) + 1, eta_min=min_lr)
+        checkpoint_lr = leaf_model.optimizer.param_groups[0]["lr"]
+        checkpoint_momentum = leaf_model.optimizer.param_groups[0]["momentum"]
+
+        cont_lr = checkpoint_lr / 10
+
+        fix_optimizer(optimizer, checkpoint_lr, checkpoint_momentum)
+
+        global_step_so_far = epochs_so_far * len(train_dataloader)
+
+        scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=cont_epochs * len(train_dataloader), eta_min=min_lr)
         leaf_model.update_optimizer_scheduler(optimizer, scheduler)
+
 
         neptune.init(project_qualified_name='vmorelli/leaf')
         params_dict = {
-            param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "min_lr", "optimizer", "scheduler", "grad_norm"]
+            param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "epochs_so_far", "cont_epochs", "cont_lr", "min_lr", "optimizer", "scheduler", "grad_norm"]
         }
         neptune_tags = []
         neptune_tags.extend((["gcp"] if on_gcp else []) + (["dbg"] if debug else []))
@@ -132,8 +140,8 @@ if __name__ == "__main__":
         str_params_dict = {p: str(pv) for p, pv in params_dict.items()}
         neptune.log_text("params", f"{json.dumps(str_params_dict)}")
 
-        steps_offset = 0
-        for epoch in range(1, num_epochs+1):
+        steps_offset = global_step_so_far
+        for epoch in range(epochs_so_far+1, epochs_so_far+cont_epochs+1):
             epoch_name = f"{model_prefix}-{epoch}"
             train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
             steps_offset += len(train_dataloader)

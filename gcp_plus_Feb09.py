@@ -33,7 +33,8 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "simple"
+        description: str = "cutmix from first epoch"
+        model_file: str = "tmp"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
@@ -61,14 +62,18 @@ if __name__ == "__main__":
     log_steps = 50 if on_gcp else 200
 
     max_lr = 0.05
-    min_lr = 1e-5
+    min_lr = 1e-4
 
     momentum = 0.9
-    weight_decay = 1e-6
+    weight_decay = 0.0
 
     grad_norm = None
-    
-    num_epochs = 10
+
+    cutmix_start = 2
+    cutmix_beta = 2.0
+    cutmix_max_num = 3
+    cutmix_prob = 0.6
+    num_epochs = 5
 
     train_transforms = A.Compose([
         A.Resize(CFG.img_size, CFG.img_size),
@@ -111,7 +116,7 @@ if __name__ == "__main__":
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
         val_dataloader = LeafDataLoader(val_dset, batch_size=val_batch_size, shuffle=False, num_workers=num_workers)
 
-        model_prefix = f"{cfg.arch}_{cfg.description}_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}"
+        model_prefix = f"{cfg.model_file}_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}"
         leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
 
         optimizer = SGD(leaf_model.model.parameters(), lr=max_lr, momentum=momentum, weight_decay=weight_decay)
@@ -135,6 +140,22 @@ if __name__ == "__main__":
         steps_offset = 0
         for epoch in range(1, num_epochs+1):
             epoch_name = f"{model_prefix}-{epoch}"
+
+            if epoch == cutmix_start:
+                leaf_model.loss_fn = CutMixCrossEntropyLoss().to(leaf_model.device)
+                leaf_model.acc_logging = False
+
+                # cutmix_p = 0.1
+                # cutmix_n = np.random.randint(2, 5)
+                train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=cutmix_beta, prob=cutmix_prob, num_mix=cutmix_max_num, transform=post_cutmix_transforms)
+                train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+
+            # if epoch > cutmix_start:
+            #     cutmix_p = max(cutmix_p + 0.1, 0.5)
+            #     cutmix_n = np.random.randint(2, 5)
+            #     train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=cutmix_beta, prob=cutmix_p, num_mix=cutmix_n, transform=post_cutmix_transforms)
+            #     train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+
             train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
             steps_offset += len(train_dataloader)
             val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)

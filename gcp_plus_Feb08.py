@@ -64,11 +64,13 @@ if __name__ == "__main__":
     min_lr = 1e-5
 
     momentum = 0.9
-    weight_decay = 1e-6
+    weight_decay = 0.0
 
     grad_norm = None
-    
-    num_epochs = 10
+
+    no_cutmix_epochs = 5
+    cutmix_epochs = 5
+    num_epochs = no_cutmix_epochs + cutmix_epochs
 
     train_transforms = A.Compose([
         A.Resize(CFG.img_size, CFG.img_size),
@@ -135,6 +137,22 @@ if __name__ == "__main__":
         steps_offset = 0
         for epoch in range(1, num_epochs+1):
             epoch_name = f"{model_prefix}-{epoch}"
+
+            if epoch == no_cutmix_epochs + 1:
+                leaf_model.loss_fn = CutMixCrossEntropyLoss().to(leaf_model.device)
+                leaf_model.acc_logging = False
+
+                cutmix_p = 0.1
+                cutmix_n = np.random.randint(2, 5)
+                train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=1.0, prob=cutmix_p, num_mix=cutmix_n, transform=post_cutmix_transforms)
+                train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+
+            if epoch > no_cutmix_epochs + 1:
+                cutmix_p = max(cutmix_p + 0.1, 0.5)
+                cutmix_n = np.random.randint(2, 5)
+                train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=1.0, prob=cutmix_p, num_mix=cutmix_n, transform=post_cutmix_transforms)
+                train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+
             train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
             steps_offset += len(train_dataloader)
             val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
