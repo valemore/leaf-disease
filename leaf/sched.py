@@ -29,3 +29,9 @@ class LinearLR(_LRScheduler):
 def get_up_scheduler(optimizer, start_lr, stop_lr, n_steps):
     scheduler = CyclicLR(optimizer, base_lr=start_lr, max_lr=stop_lr, step_size_up=n_steps)
     return scheduler
+
+
+def fix_optimizer_lr(optimizer, lr):
+    for pg in optimizer.param_groups:
+        pg["lr"] = lr
+        pg["initial_lr"] = lr

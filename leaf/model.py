@@ -159,10 +159,8 @@ class LeafModel(object):
         self.model = self.model.to(self.device)
 
 
-def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_steps=None, val_data_loader=None, save_at_log_steps=False, epoch_name="", max_steps=None, ema_steps=None, epoch=None, neptune=None, fp16=True, grad_norm=None):
+def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_steps=None, val_data_loader=None, save_at_log_steps=False, epoch_name="", max_steps=None, ema_steps=None, steps_offset=0, neptune=None, fp16=True, grad_norm=None):
     print(f"Training one epoch ({epoch_name}) with a total of {len(data_loader)} steps...")
-    if epoch is None:
-        epoch = 1
 
     loss_list, acc_list = [], []
 
@@ -227,7 +225,7 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
 
         # Metrics and logging
         if log_steps:
-            log_step = len(data_loader) * (epoch - 1) + step
+            log_step = steps_offset + step
             with torch.no_grad():
                 running_loss = ema(running_loss, loss.mean().item(), alpha)
                 preds = logits.argmax(axis=-1)
@@ -244,7 +242,7 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
                 print('Step %5d EMA train loss: %.3f, EMA train acc: %.3f' % (step, running_loss, running_acc if running_acc is not None else -1.0))
                 if val_data_loader is not None:
                     val_loss, val_acc = validate_one_epoch(leaf_model, val_data_loader)
-                    print(f"Validation after step {step * epoch}: loss {val_loss}, acc {val_acc}")
+                    print(f"Validation after step {steps_offset + step}: loss {val_loss}, acc {val_acc}")
                     if neptune is not None:
                         neptune.log_metric("loss/val", y=val_loss, x=log_step)
                         neptune.log_metric("acc/val", y=val_acc, x=log_step)
@@ -252,7 +250,7 @@ def train_one_epoch(leaf_model: LeafModel, data_loader: LeafDataLoader, log_step
                 # Save model
                 if save_at_log_steps:
                     checkpoint_name = f"checkpoint_{epoch_name}_{step}"
-                    leaf_model.save_checkpoint(checkpoint_name, epoch_name, step * epoch, running_loss)
+                    leaf_model.save_checkpoint(checkpoint_name, epoch_name, steps_offset + step, running_loss)
 
                 print(f"Time to step {step} took {(time.time() - tic):.1f} sec")
         step += 1
