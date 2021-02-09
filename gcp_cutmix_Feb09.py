@@ -11,13 +11,12 @@ from torch.optim import SGD, Adam
 
 from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet
 from leaf.model import LeafModel, train_one_epoch, validate_one_epoch
-from leaf.sched import get_warmup_scheduler, LinearLR, fix_optimizer, reset_initial_lr
+from leaf.sched import get_warmup_scheduler, LinearLR, fix_optimizer, reset_initial_lr, MyAnnealing
 from leaf.cutmix import CutMix
 from leaf.cutmix_utils import CutMixCrossEntropyLoss
 from leaf.dta import TINY_SIZE
 from leaf.utils import seed_everything
 
-import torch
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CyclicLR, LambdaLR, CosineAnnealingLR, OneCycleLR
 
 import neptune
@@ -34,14 +33,15 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "simple-short, min_lr 1e-3"
-        model_fil: str = "tmp"
+        description: str = "long+mydecay, center aug strat"
+        model_file: str = "tmp"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
-        loss_fn: str = "CrossEntropyLoss"
-        # cutmix_prob: float = 0.5
-        # cutmix_num_mix: int = 2
+        loss_fn: str = "CutMixCrossEntropyLoss"
+        cutmix_beta: float = 1.0
+        cutmix_prob: float = 0.5
+        cutmix_num_mix: int = 2
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -64,7 +64,7 @@ if __name__ == "__main__":
 
     max_lr = 0.05
     min_lr = 1e-3
-    final_lr = 1e-6
+    final_lr = 1e-7
 
     momentum = 0.9
     weight_decay = 0.0
@@ -74,6 +74,8 @@ if __name__ == "__main__":
     num_epochs = 10
 
     train_transforms = A.Compose([
+        A.SmallestMaxSize(600),
+        A.CenterCrop(600, 600),
         A.Resize(CFG.img_size, CFG.img_size),
         A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.2, rotate_limit=90, p=1.0),
         A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
@@ -87,6 +89,8 @@ if __name__ == "__main__":
     post_cutmix_transforms = None
 
     val_transforms = A.Compose([
+        A.SmallestMaxSize(600),
+        A.CenterCrop(600, 600),
         A.Resize(CFG.img_size, CFG.img_size),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
         ToTensorV2()
@@ -108,27 +112,25 @@ if __name__ == "__main__":
         fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
         pre_cutmix_train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
         train_dset = pre_cutmix_train_dset
-        # train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=1.0, prob=CFG.cutmix_prob, num_mix=CFG.cutmix_num_mix, transform=post_cutmix_transforms)
+        train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=1.0, prob=cfg.cutmix_prob, num_mix=cfg.cutmix_num_mix, transform=post_cutmix_transforms)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
         val_dataloader = LeafDataLoader(val_dset, batch_size=val_batch_size, shuffle=False, num_workers=num_workers)
 
-        checkpoint_pth = Path("/home/jupyter/outputs/tf_efficientnet_b4_ns_simple-short, min_lr 1e-3_fold0.Feb09_11-30-13/tf_efficientnet_b4_ns_simple-short, min_lr 1e-3_fold0.Feb09_11-30-13-10")
-        checkpoint = torch.load(checkpoint_pth)
-        steps_offset = checkpoint["global_step"]
-        del checkpoint
+        model_prefix = f"{cfg.model_file}_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}"
+        model_prefix = f"dbg_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}" if debug is True else model_prefix
+        leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
 
-        model_prefix = "long-cont"
-        leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir, pretrained=False)
         optimizer = SGD(leaf_model.model.parameters(), lr=max_lr, momentum=momentum, weight_decay=weight_decay)
+        # div_factor = max_lr / min_lr
+        # scheduler = OneCycleLR(optimizer, epochs=num_epochs, steps_per_epoch=len(train_dataloader), max_lr=max_lr, div_factor=div_factor)
         scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=num_epochs * len(train_dataloader) + 1, eta_min=min_lr)
         leaf_model.update_optimizer_scheduler(optimizer, scheduler)
-        leaf_model.load_checkpoint_from_file(checkpoint_pth)
 
         neptune.init(project_qualified_name='vmorelli/leaf')
         params_dict = {
-            param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "min_lr", "final_lr", "optimizer", "scheduler", "grad_norm"]
+            param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "min_lr", "optimizer", "scheduler", "grad_norm"]
         }
         neptune_tags = []
         neptune_tags.extend((["gcp"] if on_gcp else []) + (["dbg"] if debug else []))
@@ -138,11 +140,22 @@ if __name__ == "__main__":
         str_params_dict = {p: str(pv) for p, pv in params_dict.items()}
         neptune.log_text("params", f"{json.dumps(str_params_dict)}")
 
-        epoch = 10
+        steps_offset = 0
+        for epoch in range(1, num_epochs+1):
+            epoch_name = f"{model_prefix}-{epoch}"
+            train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
+            steps_offset += len(train_dataloader)
+            val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
+            print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
+            val_step = len(train_dataloader) * epoch
+            neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
+            neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
+            leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}", global_step=steps_offset)
+
         epoch_name = f"{model_prefix}-{epoch}-final"
+        current_lr = leaf_model.optimizer.param_groups[0]["lr"]
         reset_initial_lr(leaf_model.optimizer)
-        decay_factor = (final_lr / min_lr) ** (1 / len(train_dataloader))
-        scheduler = LambdaLR(leaf_model.optimizer, lr_lambda=lambda step: decay_factor ** step)
+        scheduler = MyAnnealing(leaf_model.optimizer, num_steps=len(train_dataloader), start_lr=current_lr, stop_lr=final_lr)
         leaf_model.update_optimizer_scheduler(leaf_model.optimizer, scheduler)
 
         train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)

@@ -33,15 +33,15 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "local 7, (0.05/1e-3), cutmix"
+        description: str = "local 7, (0.05/1e-3), center"
         model_file: str = "tmp"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
-        loss_fn: str = "CutMixCrossEntropyLoss"
-        cutmix_beta: float = 1.0
-        cutmix_prob: float = 0.5
-        cutmix_num_mix: int = 2
+        loss_fn: str = "CrossEntropyLoss"
+        # cutmix_beta: float = 1.0
+        # cutmix_prob: float = 0.5
+        # cutmix_num_mix: int = 2
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -106,14 +106,15 @@ if __name__ == "__main__":
 
         fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
         pre_cutmix_train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
-        # train_dset = pre_cutmix_train_dset
-        train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob, num_mix=cfg.cutmix_num_mix, transform=post_cutmix_transforms)
+        train_dset = pre_cutmix_train_dset
+        # train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob, num_mix=cfg.cutmix_num_mix, transform=post_cutmix_transforms)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
         val_dataloader = LeafDataLoader(val_dset, batch_size=val_batch_size, shuffle=False, num_workers=num_workers)
 
         model_prefix = f"{cfg.model_file}_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}"
+        model_prefix = f"dbg_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}" if debug is True else model_prefix
         leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
 
         # optimizer = Adam(leaf_model.model.parameters(), lr=min_lr)
@@ -124,7 +125,7 @@ if __name__ == "__main__":
 
         neptune.init(project_qualified_name='vmorelli/leaf')
         params_dict = {
-            param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "final_lr", "min_lr", "optimizer", "scheduler", "grad_norm"]
+            param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "min_lr", "optimizer", "scheduler", "grad_norm"]
         }
         neptune_tags = []
         neptune_tags.extend((["gcp"] if on_gcp else []) + (["dbg"] if debug else []))

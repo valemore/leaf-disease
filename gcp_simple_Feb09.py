@@ -11,7 +11,7 @@ from torch.optim import SGD, Adam
 
 from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet
 from leaf.model import LeafModel, train_one_epoch, validate_one_epoch
-from leaf.sched import get_warmup_scheduler, LinearLR, fix_optimizer, reset_initial_lr
+from leaf.sched import get_warmup_scheduler, LinearLR, fix_optimizer, reset_initial_lr, MyAnnealing
 from leaf.cutmix import CutMix
 from leaf.cutmix_utils import CutMixCrossEntropyLoss
 from leaf.dta import TINY_SIZE
@@ -33,8 +33,8 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "long+decay, center aug strat"
-        model_file: str = "tmp"
+        description: str = "long+mydecay, rrc"
+        model_file: str = "rrc"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
@@ -63,7 +63,7 @@ if __name__ == "__main__":
 
     max_lr = 0.05
     min_lr = 1e-3
-    final_lr = 1e-6
+    final_lr = 1e-7
 
     momentum = 0.9
     weight_decay = 0.0
@@ -73,9 +73,7 @@ if __name__ == "__main__":
     num_epochs = 10
 
     train_transforms = A.Compose([
-        A.SmallestMaxSize(600),
-        A.CenterCrop(600, 600),
-        A.Resize(CFG.img_size, CFG.img_size),
+        A.RandomResizedCrop(cfg.img_size, cfg.img_size, p=1.0),
         A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.2, rotate_limit=90, p=1.0),
         A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
         A.HueSaturationValue(hue_shift_limit=0.0, sat_shift_limit=20.0, val_shift_limit=10.0, p=1.0),
@@ -88,6 +86,8 @@ if __name__ == "__main__":
     post_cutmix_transforms = None
 
     val_transforms = A.Compose([
+        A.SmallestMaxSize(600),
+        A.CenterCrop(600, 600),
         A.Resize(CFG.img_size, CFG.img_size),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
         ToTensorV2()
@@ -116,6 +116,7 @@ if __name__ == "__main__":
         val_dataloader = LeafDataLoader(val_dset, batch_size=val_batch_size, shuffle=False, num_workers=num_workers)
 
         model_prefix = f"{cfg.model_file}_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}"
+        model_prefix = f"dbg_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}" if debug is True else model_prefix
         leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
 
         optimizer = SGD(leaf_model.model.parameters(), lr=max_lr, momentum=momentum, weight_decay=weight_decay)
@@ -149,9 +150,9 @@ if __name__ == "__main__":
             leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}", global_step=steps_offset)
 
         epoch_name = f"{model_prefix}-{epoch}-final"
-        decay_factor = (final_lr / min_lr) ** (1 / len(train_dataloader))
+        current_lr = leaf_model.optimizer.param_groups[0]["lr"]
         reset_initial_lr(leaf_model.optimizer)
-        scheduler = LambdaLR(leaf_model.optimizer, lr_lambda=lambda step: decay_factor ** step)
+        scheduler = MyAnnealing(leaf_model.optimizer, num_steps=len(train_dataloader), start_lr=current_lr, stop_lr=final_lr)
         leaf_model.update_optimizer_scheduler(leaf_model.optimizer, scheduler)
 
         train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
