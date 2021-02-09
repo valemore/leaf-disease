@@ -63,6 +63,7 @@ if __name__ == "__main__":
 
     min_lr = 1e-3
     max_lr = 0.05
+    final_lr = 1e-7
 
     weight_decay = 0.0
 
@@ -160,5 +161,19 @@ if __name__ == "__main__":
             neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
             neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
             leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}", global_step=steps_offset)
+
+        epoch_name = f"{model_prefix}-{epoch}-final"
+        decay_factor = (final_lr / min_lr) ** (1 / len(train_dataloader))
+        scheduler = LambdaLR(leaf_model.optimizer, lr_lambda=lambda step: decay_factor ** step)
+        leaf_model.update_optimizer_scheduler(leaf_model.optimizer, scheduler)
+
+        train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
+        steps_offset += len(train_dataloader)
+        val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
+        print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
+        val_step = len(train_dataloader) * epoch
+        neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
+        neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
+        leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}", global_step=steps_offset)
 
         neptune.stop()
