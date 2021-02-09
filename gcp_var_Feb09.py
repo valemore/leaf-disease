@@ -37,7 +37,7 @@ if __name__ == "__main__":
         model_file: str = "vit"
         num_classes: int = 5
         img_size: int = 384
-        arch: str = "vit_base_patch32_384"
+        arch: str = "vit_large_patch16_384"
         loss_fn: str = "CrossEntropyLoss"
         # cutmix_prob: float = 0.5
         # cutmix_num_mix: int = 2
@@ -126,8 +126,9 @@ if __name__ == "__main__":
 
         neptune.init(project_qualified_name='vmorelli/leaf')
         params_dict = {
-            param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "min_lr", "optimizer", "scheduler", "grad_norm"]
+            param: eval(param) for param in ["train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "min_lr", "optimizer", "scheduler", "grad_norm"]
         }
+        params_dict.update(cfg.__dict__)
         neptune_tags = []
         neptune_tags.extend((["gcp"] if on_gcp else []) + (["dbg"] if debug else []))
         neptune.create_experiment(name=model_prefix, params=params_dict, upload_source_files=['*.py', 'leaf/*.py', 'environment.yml'],
