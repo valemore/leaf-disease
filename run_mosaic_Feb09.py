@@ -78,12 +78,12 @@ if __name__ == "__main__":
         A.RGBShift(p=1.0),
         A.Transpose(p=0.5),
         A.HorizontalFlip(p=0.5),
-        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
-        ToTensorV2()
+        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0)
     ])
 
     post_mosaic_transforms = A.Compose([
-        A.RandomGridShuffle(p=0.5)
+        A.RandomGridShuffle(p=0.5),
+        ToTensorV2()
     ])
 
     val_transforms = A.Compose([
