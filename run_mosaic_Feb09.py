@@ -33,14 +33,14 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "local 7 mosaic"
+        description: str = "mosaic 7 grid"
         model_file: str = "tmp"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
         loss_fn: str = "CutMixCrossEntropyLoss"
         mosaic_beta: float = 2.0
-        mosaic_prob: float = 0.25
+        mosaic_prob: float = 0.5
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -68,7 +68,6 @@ if __name__ == "__main__":
 
     grad_norm = None
 
-    # cutmix_start = 6
     num_epochs = 7
 
     train_transforms = A.Compose([
@@ -77,12 +76,15 @@ if __name__ == "__main__":
         A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
         A.HueSaturationValue(hue_shift_limit=0, sat_shift_limit=20, val_shift_limit=10, p=1.0),
         A.RGBShift(p=1.0),
+        A.Transpose(p=0.5),
         A.HorizontalFlip(p=0.5),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
         ToTensorV2()
     ])
 
-    post_cutmix_transforms = None
+    post_mosaic_transforms = A.Compose([
+        A.RandomGridShuffle(p=0.5)
+    ])
 
     val_transforms = A.Compose([
         A.Resize(CFG.img_size, CFG.img_size),
@@ -105,8 +107,7 @@ if __name__ == "__main__":
 
         fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
         pre_mosaic_train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
-        train_dset = Mosaic(pre_mosaic_train_dset, 5, beta = cfg.mosaic_beta, prob=cfg.mosaic_prob)
-        # train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob, num_mix=cfg.cutmix_num_mix, transform=post_cutmix_transforms)
+        train_dset = Mosaic(pre_mosaic_train_dset, 5, beta = cfg.mosaic_beta, prob=cfg.mosaic_prob, transform=post_mosaic_transforms)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
@@ -116,7 +117,6 @@ if __name__ == "__main__":
         model_prefix = f"dbg_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}" if debug is True else model_prefix
         leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
 
-        # optimizer = Adam(leaf_model.model.parameters(), lr=min_lr)
         optimizer = SGD(leaf_model.model.parameters(), lr=min_lr, momentum=0.0, weight_decay=weight_decay)
         div_factor = max_lr / min_lr
         scheduler = OneCycleLR(optimizer, epochs=num_epochs, steps_per_epoch=len(train_dataloader), max_lr=max_lr)
@@ -124,7 +124,7 @@ if __name__ == "__main__":
 
         neptune.init(project_qualified_name='vmorelli/leaf')
         params_dict = {
-            param: eval(param) for param in ["train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "min_lr", "optimizer", "scheduler", "grad_norm"]
+            param: eval(param) for param in ["train_transforms", "post_mosaic_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "min_lr", "optimizer", "scheduler", "grad_norm"]
         }
         params_dict.update(cfg.__dict__)
         neptune_tags = []

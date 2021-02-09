@@ -9,12 +9,13 @@ import numpy as np
 
 from torch.optim import SGD, Adam
 
-from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet
+from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet, TINY_SIZE
 from leaf.model import LeafModel, train_one_epoch, validate_one_epoch
-from leaf.sched import get_warmup_scheduler, LinearLR, fix_optimizer, reset_initial_lr, MyAnnealing
+from leaf.sched import get_warmup_scheduler, LinearLR, fix_optimizer
 from leaf.cutmix import CutMix
 from leaf.cutmix_utils import CutMixCrossEntropyLoss
-from leaf.dta import TINY_SIZE
+from leaf.mosaic import Mosaic
+from leaf.sched import MyAnnealing, reset_initial_lr, fix_optimizer
 from leaf.utils import seed_everything
 
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CyclicLR, LambdaLR, CosineAnnealingLR, OneCycleLR
@@ -33,14 +34,14 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "vit"
+        description: str = "vit-base-mosaic"
         model_file: str = "vit"
         num_classes: int = 5
         img_size: int = 384
-        arch: str = "vit_large_patch16_384"
-        loss_fn: str = "CrossEntropyLoss"
-        # cutmix_prob: float = 0.5
-        # cutmix_num_mix: int = 2
+        arch: str = "vit_base_patch16_384"
+        loss_fn: str = "CutMixCrossEntropyLoss"
+        mosaic_beta: float = 2.0
+        mosaic_prob: float = 0.5
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -54,7 +55,7 @@ if __name__ == "__main__":
     batch_size = 18 if on_gcp else 6
     val_batch_size = 36 if on_gcp else 12
 
-    debug = False
+    debug = True
     if debug:
         batch_size = int(batch_size / 2)
         val_batch_size = int(batch_size / 2)
@@ -62,7 +63,7 @@ if __name__ == "__main__":
     log_steps = 50 if on_gcp else 200
 
     max_lr = 0.01
-    min_lr = 1e-5
+    min_lr = 1e-6
     final_lr = 1e-7
 
     momentum = 0.9
@@ -70,7 +71,7 @@ if __name__ == "__main__":
 
     grad_norm = None
     
-    num_epochs = 5
+    num_epochs = 10
 
     train_transforms = A.Compose([
         A.Resize(CFG.img_size, CFG.img_size),
@@ -107,9 +108,8 @@ if __name__ == "__main__":
             val_idxs = val_idxs[:TINY_SIZE]
 
         fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
-        pre_cutmix_train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
-        train_dset = pre_cutmix_train_dset
-        # train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=1.0, prob=CFG.cutmix_prob, num_mix=CFG.cutmix_num_mix, transform=post_cutmix_transforms)
+        pre_mosaic_train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
+        train_dset = Mosaic(pre_mosaic_train_dset, 5, beta=cfg.mosaic_beta, prob=cfg.mosaic_prob)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
@@ -150,19 +150,19 @@ if __name__ == "__main__":
             neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
             leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}", global_step=steps_offset)
 
-        # epoch_name = f"{model_prefix}-{epoch}-final"
-        # current_lr = leaf_model.optimizer.param_groups[0]["lr"]
-        # reset_initial_lr(leaf_model.optimizer)
-        # scheduler = MyAnnealing(leaf_model.optimizer, num_steps=len(train_dataloader), start_lr=current_lr, stop_lr=final_lr)
-        # leaf_model.update_optimizer_scheduler(leaf_model.optimizer, scheduler)
-        #
-        # train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
-        # steps_offset += len(train_dataloader)
-        # val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
-        # print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
-        # val_step = len(train_dataloader) * epoch
-        # neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
-        # neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
-        # leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}", global_step=steps_offset)
+        epoch_name = f"{model_prefix}-{epoch}-final"
+        current_lr = leaf_model.optimizer.param_groups[0]["lr"]
+        reset_initial_lr(leaf_model.optimizer)
+        scheduler = MyAnnealing(leaf_model.optimizer, num_steps=len(train_dataloader), start_lr=current_lr, stop_lr=final_lr)
+        leaf_model.update_optimizer_scheduler(leaf_model.optimizer, scheduler)
+
+        train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
+        steps_offset += len(train_dataloader)
+        val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
+        print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
+        val_step = len(train_dataloader) * epoch
+        neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
+        neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
+        leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}", global_step=steps_offset)
 
         neptune.stop()

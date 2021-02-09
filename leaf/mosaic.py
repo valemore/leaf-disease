@@ -8,11 +8,12 @@ from leaf.dta import UnionDataSet
 
 
 class Mosaic(Dataset):
-    def __init__(self, dataset, num_class, beta=1., prob=1.0):
+    def __init__(self, dataset, num_class, beta=1., prob=1.0, transform=None):
         self.dataset = dataset
         self.num_class = num_class
         self.beta = beta
         self.prob = prob
+        self.transform = transform
         if isinstance(dataset, UnionDataSet):
             assert len(dataset.one.labels.shape) == len(dataset.two.labels.shape)
             self.soft_targets = len(dataset.one.labels.shape) > 1
@@ -57,6 +58,9 @@ class Mosaic(Dataset):
         lb2 = self.__to_oh(lb2)
         img[:, split_y:, split_x:] = img2[:, split_y:, split_x:]
         lb += (1-lam) * (1-gam) * lb2
+
+        if self.transform:
+            img = self.transform(image=img)["image"]
 
         return img, lb, index
 
