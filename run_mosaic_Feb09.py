@@ -14,7 +14,7 @@ from leaf.model import LeafModel, train_one_epoch, validate_one_epoch
 from leaf.sched import get_warmup_scheduler, LinearLR, fix_optimizer
 from leaf.cutmix import CutMix
 from leaf.cutmix_utils import CutMixCrossEntropyLoss
-from leaf.mosaic import Mosaic
+from leaf.mosaic import Mosaic, MosaicTransform
 from leaf.utils import seed_everything
 
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CyclicLR, LambdaLR, CosineAnnealingLR, OneCycleLR
@@ -82,7 +82,8 @@ if __name__ == "__main__":
     ])
 
     post_mosaic_transforms = A.Compose([
-        A.RandomGridShuffle(p=0.5),
+        # A.RandomGridShuffle(p=0.5),
+        A.CoarseDropout(p=0.5),
         ToTensorV2()
     ])
 
@@ -107,7 +108,7 @@ if __name__ == "__main__":
 
         fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
         pre_mosaic_train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
-        train_dset = Mosaic(pre_mosaic_train_dset, 5, beta = cfg.mosaic_beta, prob=cfg.mosaic_prob, transform=post_mosaic_transforms)
+        train_dset = MosaicTransform(pre_mosaic_train_dset, 5, beta = cfg.mosaic_beta, prob=cfg.mosaic_prob, transform=post_mosaic_transforms)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)

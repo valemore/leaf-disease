@@ -59,7 +59,7 @@ if __name__ == "__main__":
 
     log_steps = 50 if on_gcp else 200
 
-    max_lr = 3e-4
+    max_lr = 1e-4
     min_lr = 1e-6
     final_lr = 1e-7
 
