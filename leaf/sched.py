@@ -37,3 +37,8 @@ def fix_optimizer(optimizer, lr, momentum=None):
         pg["initial_lr"] = lr
         if momentum:
             pg["momentum"]
+
+
+def reset_initial_lr(optimizer):
+    for pg in optimizer.param_groups:
+        pg["initial_lr"] = pg["lr"]

@@ -33,14 +33,15 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "simple-local, min_lr 1e-3, max_lr 0.05"
+        description: str = "local 7, (0.05/1e-3), cutmix"
         model_file: str = "tmp"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
-        loss_fn: str = "CrossEntropyLoss"
-        # cutmix_prob: float = 0.5
-        # cutmix_num_mix: int = 2
+        loss_fn: str = "CutMixCrossEntropyLoss"
+        cutmix_beta: float = 1.0
+        cutmix_prob: float = 0.5
+        cutmix_num_mix: int = 2
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -63,7 +64,6 @@ if __name__ == "__main__":
 
     min_lr = 1e-3
     max_lr = 0.05
-    final_lr = 1e-7
 
     weight_decay = 0.0
 
@@ -106,14 +106,14 @@ if __name__ == "__main__":
 
         fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
         pre_cutmix_train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
-        train_dset = pre_cutmix_train_dset
-        # train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=1.0, prob=CFG.cutmix_prob, num_mix=CFG.cutmix_num_mix, transform=post_cutmix_transforms)
+        # train_dset = pre_cutmix_train_dset
+        train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob, num_mix=cfg.cutmix_num_mix, transform=post_cutmix_transforms)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
         val_dataloader = LeafDataLoader(val_dset, batch_size=val_batch_size, shuffle=False, num_workers=num_workers)
 
-        model_prefix = f"{cfg.arch}_{cfg.description}_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}"
+        model_prefix = f"{cfg.model_file}_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}"
         leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
 
         # optimizer = Adam(leaf_model.model.parameters(), lr=min_lr)
@@ -124,7 +124,7 @@ if __name__ == "__main__":
 
         neptune.init(project_qualified_name='vmorelli/leaf')
         params_dict = {
-            param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "min_lr", "optimizer", "scheduler", "grad_norm"]
+            param: eval(param) for param in ["cfg", "train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "final_lr", "min_lr", "optimizer", "scheduler", "grad_norm"]
         }
         neptune_tags = []
         neptune_tags.extend((["gcp"] if on_gcp else []) + (["dbg"] if debug else []))
@@ -162,18 +162,18 @@ if __name__ == "__main__":
             neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
             leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}", global_step=steps_offset)
 
-        epoch_name = f"{model_prefix}-{epoch}-final"
-        decay_factor = (final_lr / min_lr) ** (1 / len(train_dataloader))
-        scheduler = LambdaLR(leaf_model.optimizer, lr_lambda=lambda step: decay_factor ** step)
-        leaf_model.update_optimizer_scheduler(leaf_model.optimizer, scheduler)
-
-        train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
-        steps_offset += len(train_dataloader)
-        val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
-        print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
-        val_step = len(train_dataloader) * epoch
-        neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
-        neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
-        leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}", global_step=steps_offset)
+        # epoch_name = f"{model_prefix}-{epoch}-final"
+        # decay_factor = (final_lr / min_lr) ** (1 / len(train_dataloader))
+        # scheduler = LambdaLR(leaf_model.optimizer, lr_lambda=lambda step: decay_factor ** step)
+        # leaf_model.update_optimizer_scheduler(leaf_model.optimizer, scheduler)
+        #
+        # train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
+        # steps_offset += len(train_dataloader)
+        # val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
+        # print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
+        # val_step = len(train_dataloader) * epoch
+        # neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
+        # neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
+        # leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}", global_step=steps_offset)
 
         neptune.stop()
