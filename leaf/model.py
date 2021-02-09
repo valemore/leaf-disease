@@ -59,22 +59,22 @@ def log_commit(fname):
         f.write(git_cmd_result.stdout.decode("utf-8"))
 
 class LeafModel(object):
-    def __init__(self, CFG, model_prefix=None, output_dir=None, pretrained=True):
+    def __init__(self, cfg, model_prefix=None, output_dir=None, pretrained=True):
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        self._model_prefix = model_prefix if model_prefix is not None else f"{CFG.arch}_hero_{datetime.now().strftime('%b%d_%H-%M-%S')}"
+        self._model_prefix = model_prefix if model_prefix is not None else f"{cfg.arch}_hero_{datetime.now().strftime('%b%d_%H-%M-%S')}"
         self.output_top_dir = path_maybe(output_dir)
         self.acc_logging = True
-        if CFG.loss_fn == "CrossEntropyLoss":
+        if cfg.loss_fn == "CrossEntropyLoss":
             self.loss_fn = nn.CrossEntropyLoss().to(self.device)
-        elif CFG.loss_fn == "TaylorCrossEntropyLoss":
-            self.loss_fn = TaylorCrossEntropyLoss(smoothing=CFG.smoothing, target_size=CFG.num_classes).to(self.device)
-        elif CFG.loss_fn == "CutMixCrossEntropyLoss":
+        elif cfg.loss_fn == "TaylorCrossEntropyLoss":
+            self.loss_fn = TaylorCrossEntropyLoss(smoothing=cfg.smoothing, target_size=cfg.num_classes).to(self.device)
+        elif cfg.loss_fn == "CutMixCrossEntropyLoss":
             self.loss_fn = CutMixCrossEntropyLoss().to(self.device)
             self.acc_logging = False
         self.optimizer = None
         self.scheduler = None
 
-        self.model = timm.create_model(model_name=CFG.arch, num_classes=CFG.num_classes, pretrained=pretrained)
+        self.model = timm.create_model(model_name=cfg.arch, num_classes=cfg.num_classes, pretrained=pretrained)
 
     @property
     def model_prefix(self):

@@ -33,11 +33,11 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "long+mydecay, rrc"
-        model_file: str = "rrc"
+        description: str = "b5"
+        model_file: str = "b5"
         num_classes: int = 5
-        img_size: int = 380
-        arch: str = "tf_efficientnet_b4_ns"
+        img_size: int = 456
+        arch: str = "tf_efficientnet_b5_ns"
         loss_fn: str = "CrossEntropyLoss"
         # cutmix_prob: float = 0.5
         # cutmix_num_mix: int = 2
@@ -51,8 +51,8 @@ if __name__ == "__main__":
 
     num_workers = 4
 
-    batch_size = 36 if on_gcp else 12
-    val_batch_size = 72 if on_gcp else 24
+    batch_size = 12 if on_gcp else 4
+    val_batch_size = 24 if on_gcp else 8
 
     debug = False
     if debug:
@@ -70,10 +70,10 @@ if __name__ == "__main__":
 
     grad_norm = None
     
-    num_epochs = 10
+    num_epochs = 5
 
     train_transforms = A.Compose([
-        A.RandomResizedCrop(cfg.img_size, cfg.img_size, p=1.0),
+        A.Resize(CFG.img_size, CFG.img_size),
         A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.2, rotate_limit=90, p=1.0),
         A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
         A.HueSaturationValue(hue_shift_limit=0.0, sat_shift_limit=20.0, val_shift_limit=10.0, p=1.0),
@@ -86,7 +86,6 @@ if __name__ == "__main__":
     post_cutmix_transforms = None
 
     val_transforms = A.Compose([
-        A.SmallestMaxSize(600),
         A.CenterCrop(600, 600),
         A.Resize(CFG.img_size, CFG.img_size),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
@@ -149,19 +148,19 @@ if __name__ == "__main__":
             neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
             leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}", global_step=steps_offset)
 
-        epoch_name = f"{model_prefix}-{epoch}-final"
-        current_lr = leaf_model.optimizer.param_groups[0]["lr"]
-        reset_initial_lr(leaf_model.optimizer)
-        scheduler = MyAnnealing(leaf_model.optimizer, num_steps=len(train_dataloader), start_lr=current_lr, stop_lr=final_lr)
-        leaf_model.update_optimizer_scheduler(leaf_model.optimizer, scheduler)
-
-        train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
-        steps_offset += len(train_dataloader)
-        val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
-        print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
-        val_step = len(train_dataloader) * epoch
-        neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
-        neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
-        leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}", global_step=steps_offset)
+        # epoch_name = f"{model_prefix}-{epoch}-final"
+        # current_lr = leaf_model.optimizer.param_groups[0]["lr"]
+        # reset_initial_lr(leaf_model.optimizer)
+        # scheduler = MyAnnealing(leaf_model.optimizer, num_steps=len(train_dataloader), start_lr=current_lr, stop_lr=final_lr)
+        # leaf_model.update_optimizer_scheduler(leaf_model.optimizer, scheduler)
+        #
+        # train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
+        # steps_offset += len(train_dataloader)
+        # val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
+        # print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
+        # val_step = len(train_dataloader) * epoch
+        # neptune.log_metric("loss/val", y=val_loss, x=steps_offset)
+        # neptune.log_metric("acc/val", y=val_acc, x=steps_offset)
+        # leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}", global_step=steps_offset)
 
         neptune.stop()
