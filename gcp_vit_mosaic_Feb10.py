@@ -55,7 +55,7 @@ if __name__ == "__main__":
     batch_size = 18 if on_gcp else 6
     val_batch_size = 36 if on_gcp else 12
 
-    debug = True
+    debug = False
     if debug:
         batch_size = int(batch_size / 2)
         val_batch_size = int(batch_size / 2)
@@ -63,15 +63,15 @@ if __name__ == "__main__":
     log_steps = 50 if on_gcp else 200
 
     max_lr = 0.01
-    min_lr = 1e-5
-    final_lr = 1e-8
+    min_lr = 1e-8
+    final_lr = 1e-11
 
     momentum = 0.9
     weight_decay = 0.0
 
     grad_norm = None
     
-    num_epochs = 10
+    num_epochs = 15
 
     train_transforms = A.Compose([
         A.Resize(CFG.img_size, CFG.img_size),

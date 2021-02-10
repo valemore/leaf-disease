@@ -59,8 +59,8 @@ if __name__ == "__main__":
 
     log_steps = 50 if on_gcp else 200
 
-    max_lr = 3e-5
-    min_lr = 1e-6
+    max_lr = 1e-5
+    min_lr = 5e-7
     final_lr = 1e-7
 
     weight_decay = 0.0
