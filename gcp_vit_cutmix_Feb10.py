@@ -11,6 +11,7 @@ from torch.optim import SGD, Adam
 
 from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet, TINY_SIZE
 from leaf.model import LeafModel, train_one_epoch, validate_one_epoch
+from leaf.sched import get_warmup_scheduler, LinearLR, fix_optimizer
 from leaf.cutmix import CutMix
 from leaf.cutmix_utils import CutMixCrossEntropyLoss
 from leaf.mosaic import Mosaic
@@ -32,14 +33,15 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "vit-mosaic-onecycle"
-        model_file: str = "vit-mosaic-oc"
+        description: str = "vit-base-mosaic"
+        model_file: str = "vit-cutmix"
         num_classes: int = 5
         img_size: int = 384
         arch: str = "vit_base_patch16_384"
         loss_fn: str = "CutMixCrossEntropyLoss"
-        mosaic_beta: float = 2.0
-        mosaic_prob: float = 0.5
+        cutmix_prob: float = 0.5
+        cutmix_num_mix: int = 2
+        cutmix_beta: float = 1.0
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -61,9 +63,9 @@ if __name__ == "__main__":
     log_steps = 50 if on_gcp else 200
 
     max_lr = 0.01
-    # start_lr = 0.01 / 25
-    # min_lr = start_lr / 1e-4
+    min_lr = 1e-8
 
+    momentum = 0.9
     weight_decay = 0.0
 
     grad_norm = None
@@ -81,7 +83,7 @@ if __name__ == "__main__":
         ToTensorV2()
     ])
 
-    post_mosaic_transforms = None
+    post_cutmix_transforms = None
 
     val_transforms = A.Compose([
         A.Resize(CFG.img_size, CFG.img_size),
@@ -96,15 +98,15 @@ if __name__ == "__main__":
     folds = get_leaf_splits("./data/images/labels.csv", num_splits, random_seed=5293)
 
     for fold, (train_idxs, val_idxs) in enumerate(folds):
-        # if fold != 0:
-        #     continue
+        if fold != 0:
+            continue
         if debug:
             train_idxs = train_idxs[:TINY_SIZE]
             val_idxs = val_idxs[:TINY_SIZE]
 
         fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
-        pre_mosaic_train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
-        train_dset = Mosaic(pre_mosaic_train_dset, 5, beta=cfg.mosaic_beta, prob=cfg.mosaic_prob)
+        pre_cutmix_train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
+        train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob, num_mix=cfg.cutmix_num_mix, transform=post_cutmix_transforms)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
@@ -114,18 +116,13 @@ if __name__ == "__main__":
         model_prefix = f"dbg_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}" if debug is True else model_prefix
         leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
 
-        optimizer = SGD(leaf_model.model.parameters(), lr=max_lr, momentum=0.0, weight_decay=weight_decay)
-        # start_div_factor = max_lr / start_lr
-        # final_div_factor = start_lr / min_lr
-        # scheduler = OneCycleLR(optimizer, epochs=num_epochs, steps_per_epoch=len(train_dataloader), max_lr=max_lr, div_factor=start_div_factor, final_div_factor=final_div_factor)
-        scheduler = OneCycleLR(optimizer, epochs=num_epochs, steps_per_epoch=len(train_dataloader), max_lr=max_lr)
+        optimizer = SGD(leaf_model.model.parameters(), lr=max_lr, momentum=momentum, weight_decay=weight_decay)
+        scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=num_epochs * len(train_dataloader) + 1, eta_min=min_lr)
         leaf_model.update_optimizer_scheduler(optimizer, scheduler)
 
         neptune.init(project_qualified_name='vmorelli/leaf')
         params_dict = {
-            param: eval(param) for param in ["train_transforms", "post_mosaic_transforms", "val_transforms", "batch_size", "num_epochs","max_lr",
-            # "start_lr", "min_lr",
-            "optimizer", "scheduler", "grad_norm"]
+            param: eval(param) for param in ["train_transforms", "post_cutmix_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "min_lr", "optimizer", "scheduler", "grad_norm"]
         }
         params_dict.update(cfg.__dict__)
         neptune_tags = []
