@@ -33,7 +33,7 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "vit-base-mosaic"
+        description: str = "vit-cutmix-final"
         model_file: str = "vit-cutmix"
         num_classes: int = 5
         img_size: int = 384
@@ -53,8 +53,8 @@ if __name__ == "__main__":
     num_workers = 4
     use_fp16 = False
 
-    batch_size = 9
-    val_batch_size = 18
+    batch_size = 18
+    val_batch_size = 36
 
     debug = False
     if debug:
@@ -79,6 +79,7 @@ if __name__ == "__main__":
         A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
         A.HueSaturationValue(hue_shift_limit=0.0, sat_shift_limit=20.0, val_shift_limit=10.0, p=1.0),
         A.RGBShift(p=1.0),
+        A.Transpose(p=0.5),
         A.HorizontalFlip(p=0.5),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
         ToTensorV2()
@@ -99,8 +100,8 @@ if __name__ == "__main__":
     folds = get_leaf_splits("./data/images/labels.csv", num_splits, random_seed=5293)
 
     for fold, (train_idxs, val_idxs) in enumerate(folds):
-        if fold != 0:
-            continue
+        # if fold != 0:
+        #     continue
         if debug:
             train_idxs = train_idxs[:TINY_SIZE]
             val_idxs = val_idxs[:TINY_SIZE]
