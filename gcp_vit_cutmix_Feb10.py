@@ -51,9 +51,10 @@ if __name__ == "__main__":
     output_dir.mkdir(exist_ok=True)
 
     num_workers = 4
+    use_fp16 = False
 
-    batch_size = 18 if on_gcp else 6
-    val_batch_size = 36 if on_gcp else 12
+    batch_size = 9
+    val_batch_size = 18
 
     debug = False
     if debug:
@@ -70,7 +71,7 @@ if __name__ == "__main__":
 
     grad_norm = None
     
-    num_epochs = 20
+    num_epochs = 15
 
     train_transforms = A.Compose([
         A.Resize(CFG.img_size, CFG.img_size),
@@ -136,7 +137,7 @@ if __name__ == "__main__":
         steps_offset = 0
         for epoch in range(1, num_epochs+1):
             epoch_name = f"{model_prefix}-{epoch}"
-            train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
+            train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm, fp16=use_fp16)
             steps_offset += len(train_dataloader)
             val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
             print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
