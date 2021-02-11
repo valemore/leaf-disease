@@ -50,9 +50,10 @@ if __name__ == "__main__":
     output_dir.mkdir(exist_ok=True)
 
     num_workers = 4
+    use_fp16 = False
 
-    batch_size = 36 if on_gcp else 12
-    val_batch_size = 72 if on_gcp else 24
+    batch_size = 6
+    val_batch_size = 12
 
     debug = False
     if debug:
@@ -64,12 +65,10 @@ if __name__ == "__main__":
 
     min_lr = 8.055822378718028e-4
     max_lr = 0.06190499161193587
-    # start_lr = max_lr / 25
-    # min_lr = 1e-7
 
     grad_norm = None
     
-    num_epochs = 20
+    num_epochs = 15
 
     description = "good cutmix run"
 
@@ -77,7 +76,6 @@ if __name__ == "__main__":
         A.Resize(CFG.img_size, CFG.img_size),
         A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.2, rotate_limit=90, p=1.0),
         A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
-        A.HueSaturationValue(hue_shift_limit=0.0, sat_shift_limit=20.0, val_shift_limit=10.0, p=1.0),
         A.RGBShift(p=1.0),
         A.HorizontalFlip(p=0.5),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
@@ -141,7 +139,7 @@ if __name__ == "__main__":
         steps_offset = 0
         for epoch in range(1, num_epochs+1):
             epoch_name = f"{model_prefix}-{epoch}"
-            train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm)
+            train_one_epoch(leaf_model, train_dataloader, log_steps=log_steps, epoch_name=epoch_name, steps_offset=steps_offset, neptune=neptune, grad_norm=grad_norm, fp16=use_fp16)
             steps_offset += len(train_dataloader)
             val_loss, val_acc = validate_one_epoch(leaf_model, val_dataloader)
             print(f"Validation after step {steps_offset}: loss {val_loss}, acc {val_acc}")
