@@ -1,7 +1,7 @@
 import warnings
 import math
 
-from torch.optim.lr_scheduler import CyclicLR, LambdaLR, StepLR, _LRScheduler
+from torch.optim.lr_scheduler import CyclicLR, LambdaLR, StepLR, _LRScheduler, OneCycleLR
 
 def get_warmup_scheduler(optimizer, min_lr, max_lr, warmup_steps):
     if float(min_lr) == 0.0:
@@ -72,3 +72,9 @@ class MyAnnealing(_LRScheduler):
             return [base_lr for base_lr in self.base_lrs]
         
         return [annealing_cos(self.start_lr, self.stop_lr, (self.steps-1) / self.num_steps) for base_lr in self.base_lrs]
+
+
+def get_one_cycle(optimizer, start_lr, max_lr, final_lr, num_epochs, steps_per_epoch):
+    start_div_factor = max_lr / start_lr
+    final_div_factor = start_lr / final_lr
+    return OneCycleLR(optimizer, epochs=num_epochs, steps_per_epoch=steps_per_epoch, max_lr=max_lr, div_factor=start_div_factor, final_div_factor=final_div_factor)
