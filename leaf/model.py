@@ -58,8 +58,21 @@ def log_commit(fname):
     with open(fname, "w") as f:
         f.write(git_cmd_result.stdout.decode("utf-8"))
 
+
+class DropoutWrap(nn.Module):
+    def __init__(self, layer, dropout=0.5):
+        super().__init__()
+        self.layer = layer
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        x = self.layer(x)
+        x = self.dropout(x)
+        return x
+
+
 class LeafModel(object):
-    def __init__(self, cfg, model_prefix=None, output_dir=None, pretrained=True):
+    def __init__(self, cfg, model_prefix=None, output_dir=None, pretrained=True, dropout=None):
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self._model_prefix = model_prefix if model_prefix is not None else f"{cfg.arch}_hero_{datetime.now().strftime('%b%d_%H-%M-%S')}"
         self.output_top_dir = path_maybe(output_dir)
@@ -73,8 +86,12 @@ class LeafModel(object):
             self.acc_logging = False
         self.optimizer = None
         self.scheduler = None
+        self.dropout = dropout
 
         self.model = timm.create_model(model_name=cfg.arch, num_classes=cfg.num_classes, pretrained=pretrained)
+        if self.dropout is not None:
+            self.model.act2 = DropoutWrap(self.model.act2)
+
 
     @property
     def model_prefix(self):
