@@ -76,14 +76,14 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "local cutmix lower lr"
+        description: str = "mixup beta 0.5"
         model_file: str = "tmp"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
         loss_fn: str = "CutMixCrossEntropyLoss"
         mixup_prob: float = 0.5
-        mixup_beta: float = 1.0
+        mixup_beta: float = 0.5
         # cutmix_prob: float = 0.5
         # cutmix_num_mix: int = 2
         # cutmix_beta: float = 1.0

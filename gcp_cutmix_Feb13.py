@@ -74,7 +74,7 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "cutmix lr 1e-2"
+        description: str = "cutmix lr 3e-3mid, wd 1e-6"
         model_file: str = "tmp"
         num_classes: int = 5
         img_size: int = 380
@@ -101,12 +101,12 @@ if __name__ == "__main__":
 
     log_steps = 50 if on_gcp else 200
 
-    max_lr = 5e-3
+    max_lr = 3e-3
     start_lr = 1e-6
-    # mid_lr = 1e-4
+    mid_lr = 1e-3
     final_lr = 1e-6
 
-    weight_decay = 0.0
+    weight_decay = 1e-6
 
     grad_norm = None
 
@@ -187,8 +187,8 @@ if __name__ == "__main__":
         
         # 5 Cosine annealing
         reset_initial_lr(leaf_model.optimizer)
-        cos_epochs = 5
-        leaf_model.scheduler = CosineAnnealingWarmRestarts(leaf_model.optimizer, T_0=cos_epochs*len(train_dataloader)+1, eta_min=final_lr)
+        cos_epochs = 10
+        leaf_model.scheduler = CosineAnnealingWarmRestarts(leaf_model.optimizer, T_0=cos_epochs*len(train_dataloader)+1, eta_min=final_lr/10)
         trainer.train_epochs(cos_epochs)
         
         neptune.stop()

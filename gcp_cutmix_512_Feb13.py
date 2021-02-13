@@ -9,8 +9,6 @@ import numpy as np
 
 import torch
 from torch.optim import SGD, Adam
-from adamp import AdamP
-from ranger import Ranger
 
 from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet, TINY_SIZE
 from leaf.model import LeafModel, train_one_epoch, validate_one_epoch
@@ -76,17 +74,15 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "local cutmix lower lr"
+        description: str = "cutmix lr 1e-3, 512"
         model_file: str = "tmp"
         num_classes: int = 5
-        img_size: int = 380
+        img_size: int = 512
         arch: str = "tf_efficientnet_b4_ns"
         loss_fn: str = "CutMixCrossEntropyLoss"
-        mixup_prob: float = 0.5
-        mixup_beta: float = 1.0
-        # cutmix_prob: float = 0.5
-        # cutmix_num_mix: int = 2
-        # cutmix_beta: float = 1.0
+        cutmix_prob: float = 0.5
+        cutmix_num_mix: int = 2
+        cutmix_beta: float = 1.0
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -95,8 +91,8 @@ if __name__ == "__main__":
     num_workers = 4
     use_fp16 = True
 
-    batch_size = 12
-    val_batch_size = 24
+    batch_size = 24
+    val_batch_size = 48
 
     debug = False
     if debug:
@@ -105,16 +101,16 @@ if __name__ == "__main__":
 
     log_steps = 50 if on_gcp else 200
 
-    max_lr = 3e-4
-    start_lr = 1e-5
-    # mid_lr = 1.5e-4
-    final_lr = 1e-6
-    
+    max_lr = 1e-3
+    start_lr = 1e-7
+    # mid_lr = 3e-4
+    final_lr = 1e-7
+
     weight_decay = 0.0
 
     grad_norm = None
-    
-    # num_epochs = 11
+
+    # num_epochs = 12
 
     train_transforms = A.Compose([
         A.Resize(CFG.img_size, CFG.img_size),
@@ -151,8 +147,9 @@ if __name__ == "__main__":
 
         fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
         pre_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
-        # train_dset = pre_dset
-        train_dset = Mixup(pre_dset, num_class=5, beta=cfg.mixup_beta, prob=cfg.mixup_prob)
+        # train_dset = pre_cutmix_train_dset
+        train_dset = CutMix(pre_dset, num_class=5, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob)
+    #     train_dset = CutMix(pre_cutmix_train_dset, num_class=5, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob, num_mix=cfg.cutmix_num_mix, transform=post_cutmix_transforms)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
@@ -181,7 +178,7 @@ if __name__ == "__main__":
         reset_initial_lr(leaf_model.optimizer)
         cos_epochs = 10
         leaf_model.scheduler = CosineAnnealingWarmRestarts(leaf_model.optimizer, T_0=cos_epochs*len(train_dataloader)+1, eta_min=final_lr)
-        trainer.train_epochs(10)
+        trainer.train_epochs(cos_epochs)
 
         # # Warmup
         # reset_initial_lr(leaf_model.optimizer)
@@ -193,5 +190,5 @@ if __name__ == "__main__":
         # cos_epochs = 5
         # leaf_model.scheduler = CosineAnnealingWarmRestarts(leaf_model.optimizer, T_0=cos_epochs*len(train_dataloader)+1, eta_min=final_lr)
         # trainer.train_epochs(cos_epochs)
-
+        
         neptune.stop()

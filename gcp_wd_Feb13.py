@@ -9,8 +9,6 @@ import numpy as np
 
 import torch
 from torch.optim import SGD, Adam
-from adamp import AdamP
-from ranger import Ranger
 
 from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet, TINY_SIZE
 from leaf.model import LeafModel, train_one_epoch, validate_one_epoch
@@ -21,7 +19,7 @@ from leaf.mixup import Mixup
 from leaf.mosaic import Mosaic
 from leaf.utils import seed_everything
 
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CyclicLR, LambdaLR, CosineAnnealingLR, OneCycleLR
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CyclicLR, LambdaLR, CosineAnnealingLR, ReduceLROnPlateau
 
 import neptune
 
@@ -52,10 +50,10 @@ class Trainer(object):
         self.fp16 = fp16
         self.grad_norm = grad_norm
 
-    def train_epochs(self, epochs):
+    def train_epochs(self, epochs, scheduler=None):
         for _ in range(epochs):
             epoch_name = f"{self.leaf_model.model_prefix}-{self.epoch}"
-            train_one_epoch(self.leaf_model, self.train_dataloader, log_steps=self.log_steps, epoch_name=epoch_name, steps_offset=self.steps_offset, neptune=self.neptune, grad_norm=self.grad_norm, fp16=self.fp16)
+            losses, accs = train_one_epoch(self.leaf_model, self.train_dataloader, log_steps=self.log_steps, epoch_name=epoch_name, steps_offset=self.steps_offset, neptune=self.neptune, grad_norm=self.grad_norm, fp16=self.fp16)
             self.steps_offset += len(self.train_dataloader)
             self.epoch += 1
             val_loss, val_acc = validate_one_epoch(self.leaf_model, self.val_dataloader)
@@ -64,6 +62,9 @@ class Trainer(object):
                 neptune.log_metric("loss/val", y=val_loss, x=self.steps_offset)
                 neptune.log_metric("acc/val", y=val_acc, x=self.steps_offset)
             self.leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}")
+            if scheduler is not None:
+                if scheduler is not None:
+                    scheduler.step(np.mean(losses))
 
 
 if __name__ == "__main__":
@@ -76,17 +77,15 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "local cutmix lower lr"
-        model_file: str = "tmp"
+        description: str = "wd lr 3e-3"
+        model_file: str = "wd"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
         loss_fn: str = "CutMixCrossEntropyLoss"
-        mixup_prob: float = 0.5
-        mixup_beta: float = 1.0
-        # cutmix_prob: float = 0.5
-        # cutmix_num_mix: int = 2
-        # cutmix_beta: float = 1.0
+        cutmix_prob: float = 0.5
+        cutmix_num_mix: int = 2
+        cutmix_beta: float = 1.0
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -95,8 +94,8 @@ if __name__ == "__main__":
     num_workers = 4
     use_fp16 = True
 
-    batch_size = 12
-    val_batch_size = 24
+    batch_size = 36
+    val_batch_size = 72
 
     debug = False
     if debug:
@@ -105,15 +104,15 @@ if __name__ == "__main__":
 
     log_steps = 50 if on_gcp else 200
 
-    max_lr = 3e-4
-    start_lr = 1e-5
-    # mid_lr = 1.5e-4
+    max_lr = 3e-3
+    start_lr = 1e-6
+    mid_lr = 1e-3
     final_lr = 1e-6
-    
-    weight_decay = 0.0
+
+    weight_decay = 1e-6
 
     grad_norm = None
-    
+
     # num_epochs = 11
 
     train_transforms = A.Compose([
@@ -123,6 +122,7 @@ if __name__ == "__main__":
         A.RGBShift(p=1.0),
         # A.Transpose(p=0.5),
         A.HorizontalFlip(p=0.5),
+        # A.CoarseDropout(p=0.5),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0),
         ToTensorV2()
     ])
@@ -150,9 +150,9 @@ if __name__ == "__main__":
             val_idxs = val_idxs[:TINY_SIZE]
 
         fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
-        pre_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
-        # train_dset = pre_dset
-        train_dset = Mixup(pre_dset, num_class=5, beta=cfg.mixup_beta, prob=cfg.mixup_prob)
+        train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
+        # train_dset = Mixup(train_dset, num_class=5, beta=cfg.mixup_beta, prob=cfg.mixup_prob)
+        train_dset = CutMix(train_dset, num_class=5, num_mix=cfg.cutmix_num_mix, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
@@ -177,21 +177,28 @@ if __name__ == "__main__":
         leaf_model.scheduler = LinearLR(leaf_model.optimizer, start_lr, max_lr, len(train_dataloader))
         trainer.train_epochs(1)
 
+        # Cosine annealing
+        reset_initial_lr(leaf_model.optimizer)
+        cos_epochs = 5
+        leaf_model.scheduler = CosineAnnealingWarmRestarts(leaf_model.optimizer, T_0=cos_epochs*len(train_dataloader)+1, eta_min=final_lr)
+        trainer.train_epochs(cos_epochs)
+
+        # Warmup
+        reset_initial_lr(leaf_model.optimizer)
+        leaf_model.scheduler = LinearLR(leaf_model.optimizer, start_lr, mid_lr, len(train_dataloader))
+        trainer.train_epochs(1)
+
         # 5 Cosine annealing
         reset_initial_lr(leaf_model.optimizer)
-        cos_epochs = 10
+        cos_epochs = 5
         leaf_model.scheduler = CosineAnnealingWarmRestarts(leaf_model.optimizer, T_0=cos_epochs*len(train_dataloader)+1, eta_min=final_lr)
-        trainer.train_epochs(10)
+        trainer.train_epochs(cos_epochs)
 
-        # # Warmup
-        # reset_initial_lr(leaf_model.optimizer)
-        # leaf_model.scheduler = LinearLR(leaf_model.optimizer, start_lr, mid_lr, len(train_dataloader))
-        # trainer.train_epochs(1)
-        
-        # # 5 Cosine annealing
-        # reset_initial_lr(leaf_model.optimizer)
-        # cos_epochs = 5
-        # leaf_model.scheduler = CosineAnnealingWarmRestarts(leaf_model.optimizer, T_0=cos_epochs*len(train_dataloader)+1, eta_min=final_lr)
-        # trainer.train_epochs(cos_epochs)
+        # Continue without scheduler
+        leaf_model.scheduler = None
+        reset_initial_lr(leaf_model.optimizer)
+        final_scheduler = ReduceLROnPlateau(leaf_model.optimizer, mode='min', patience=1)
+
+        trainer.train_epochs(10, final_scheduler)
 
         neptune.stop()

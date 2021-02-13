@@ -29,7 +29,7 @@ from albumentations.pytorch.transforms import ToTensorV2
 
 def get_params_dict(cfg):
     params_dict = {}
-    for param in ["train_transforms", "post_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "min_lr", "start_lr", "final_lr", "mid_lr", "leaf_model.optimizer", "leaf_model.scheduler", "grad_norm"]:
+    for param in ["train_transforms", "post_transforms", "val_transforms", "batch_size", "num_epochs", "max_lr", "min_lr", "start_lr", "mid_lr", "final_lr", "mid_lr", "leaf_model.optimizer", "leaf_model.scheduler", "grad_norm"]:
         try:
             params_dict[param] = eval(param)
         except:

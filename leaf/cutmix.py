@@ -7,6 +7,12 @@ from leaf.cutmix_utils import onehot, rand_bbox
 from leaf.dta import UnionDataSet
 
 
+def len_robust(x):
+    if hasattr(x, "len"):
+        return len(x)
+    else:
+        return 1
+
 class CutMix(Dataset):
     def __init__(self, dataset, num_class, num_mix=1, beta=1., prob=1.0, transform=None):
         self.dataset = dataset
@@ -15,11 +21,12 @@ class CutMix(Dataset):
         self.beta = beta
         self.prob = prob
         self.transform = transform
-        if isinstance(dataset, UnionDataSet):
-            assert len(dataset.one.labels.shape) == len(dataset.two.labels.shape)
-            self.soft_targets = len(dataset.one.labels.shape) > 1
+        if len_robust(dataset[0][1]) > 1:
+            print("soft targets")
+            self.soft_targets = True
         else:
-            self.soft_targets = len(dataset.labels.shape) > 1
+            print("hard targets")
+            self.soft_targets = False
 
     def __getitem__(self, index):
         img, lb, _ = self.dataset[index]

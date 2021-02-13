@@ -76,17 +76,17 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "local cutmix lower lr"
+        description: str = "mixup+cutmix"
         model_file: str = "tmp"
         num_classes: int = 5
         img_size: int = 380
         arch: str = "tf_efficientnet_b4_ns"
         loss_fn: str = "CutMixCrossEntropyLoss"
         mixup_prob: float = 0.5
-        mixup_beta: float = 1.0
-        # cutmix_prob: float = 0.5
-        # cutmix_num_mix: int = 2
-        # cutmix_beta: float = 1.0
+        mixup_beta: float = 0.5
+        cutmix_prob: float = 0.5
+        cutmix_num_mix: int = 2
+        cutmix_beta: float = 1.0
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -150,9 +150,9 @@ if __name__ == "__main__":
             val_idxs = val_idxs[:TINY_SIZE]
 
         fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
-        pre_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
-        # train_dset = pre_dset
-        train_dset = Mixup(pre_dset, num_class=5, beta=cfg.mixup_beta, prob=cfg.mixup_prob)
+        train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
+        train_dset = Mixup(train_dset, num_class=5, beta=cfg.mixup_beta, prob=cfg.mixup_prob)
+        train_dset = CutMix(train_dset, num_class=5, num_mix=cfg.cutmix_num_mix, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)

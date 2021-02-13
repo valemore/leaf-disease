@@ -14,12 +14,10 @@ def convert_checkpoint(checkpoint_fname, out_fname):
 
 def seed_everything(seed):
     random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
+    np.random.seed(seed) # cpu vars
+    torch.manual_seed(seed) # cpu  vars
+    torch.cuda.manual_seed(seed) # cpu  vars
+    torch.cuda.manual_seed_all(seed) # gpu vars
 
 
 # out_dir = Path("/home/v/v/leaf-disease/kaggle/leaf-model-folds/")
