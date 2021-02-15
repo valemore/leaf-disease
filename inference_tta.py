@@ -16,8 +16,8 @@ import albumentations as A
 from albumentations.pytorch.transforms import ToTensorV2
 
 arch = "tf_efficientnet_b4_ns"
-tta_img_size = 512
-batch_size = 10
+tta_img_size = 480
+batch_size = 32
 
 checkpoint_dir = Path("b4-folds")
 checkpoints = {
@@ -63,7 +63,8 @@ for fold, (train_idxs, val_idxs) in enumerate(folds):
     model.eval()
 
     dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=tta_transforms)
-    logits_fold = torch.zeros((num_tta, len(dset), 5), dtype=float, requires_grad=False)
+    # logits_fold = torch.zeros((num_tta, len(dset), 5), dtype=float, requires_grad=False)
+    logits_fold = np.zeros((num_tta, len(dset), 5), dtype=float)
     labels_fold = dset.labels
 
     dataloader = DataLoader(dset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
@@ -78,12 +79,14 @@ for fold, (train_idxs, val_idxs) in enumerate(folds):
                 logits[i:(i + bs), :] = model.forward(imgs)
                 i += bs
             logits = logits[:i]
-            logits_fold[i_tta, :, :] = logits
+            logits_fold[i_tta, :, :] = logits.cpu().numpy()
             pbar.update(1)
 
-        probs_fold = F.softmax(logits_fold, dim=-1).cpu().numpy()
-        probs_fold = np.mean(probs_fold, axis=0)
-        preds_fold = probs_fold.argmax(axis=-1)
+        # probs_fold = F.softmax(logits_fold, dim=-1).cpu().numpy()
+        # probs_fold = np.mean(probs_fold, axis=0)
+        # preds_fold = probs_fold.argmax(axis=-1)
+        logits_fold = np.mean(logits_fold, axis=0)
+        preds_fold = logits_fold.argmax(axis=-1)
         fold_accs[fold] = (labels_fold == preds_fold).sum().item() / i
 
 print(np.mean(fold_accs))
