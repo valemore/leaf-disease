@@ -77,8 +77,8 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "b4 446 hope"
-        model_file: str = "b4-446-distill"
+        description: str = "distillation no cutmix"
+        model_file: str = "b4-446-distill-nc"
         num_classes: int = 5
         img_size: int = 446
         arch: str = "tf_efficientnet_b4_ns"
@@ -152,7 +152,7 @@ if __name__ == "__main__":
         # train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
         train_dset = DistillationDataSet(train_dset, "data/images/soft_labels.csv", soft_ratio=cfg.soft_ratio, soft_start_col=2)
         # train_dset = Mixup(train_dset, num_class=5, beta=cfg.mixup_beta, prob=cfg.mixup_prob)
-        train_dset = CutMix(train_dset, num_class=5, num_mix=cfg.cutmix_num_mix, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob)
+        # train_dset = CutMix(train_dset, num_class=5, num_mix=cfg.cutmix_num_mix, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)

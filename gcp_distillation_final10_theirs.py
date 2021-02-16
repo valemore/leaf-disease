@@ -77,8 +77,8 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "b4 446 hope"
-        model_file: str = "b4-446-distill"
+        description: str = "b4 446 final 10 theirs"
+        model_file: str = "b4-446-final10-theirs"
         num_classes: int = 5
         img_size: int = 446
         arch: str = "tf_efficientnet_b4_ns"
@@ -86,7 +86,8 @@ if __name__ == "__main__":
         cutmix_prob: float = 0.5
         cutmix_num_mix: int = 1
         cutmix_beta: float = 1.0
-        soft_ratio: float = 0.3
+        soft_ratio: float = 0.5
+        cos_epochs: int = 10
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -135,9 +136,12 @@ if __name__ == "__main__":
     ])
 
     dset_2020 = LeafDataset("data/images", "data/images/labels.csv", transform=None)
-    #dset_2019 = LeafDataset("data/2019", "data/2019/labels.csv", transform=None, tiny=debug)
+    dset_2019 = LeafDataset("data/2019", "data/2019/labels.csv", transform=None, tiny=debug)
 
     num_splits = 5
+
+    distilled_dset_2020 = DistillationDataSet(dset_2020, "./data/theirs/soft_targets_2020.csv", soft_ratio=cfg.soft_ratio, soft_start_col=1)
+    dset_2019 = DistillationDataSet(dset_2019, "./data/theirs/soft_targets_2019.csv", soft_ratio=cfg.soft_ratio, soft_start_col=1)
     folds = get_leaf_splits("./data/images/labels.csv", num_splits, random_seed=5293)
 
     torch.cuda.empty_cache()
@@ -148,10 +152,8 @@ if __name__ == "__main__":
             train_idxs = train_idxs[:TINY_SIZE]
             val_idxs = val_idxs[:TINY_SIZE]
 
-        train_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=train_transforms)
-        # train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
-        train_dset = DistillationDataSet(train_dset, "data/images/soft_labels.csv", soft_ratio=cfg.soft_ratio, soft_start_col=2)
-        # train_dset = Mixup(train_dset, num_class=5, beta=cfg.mixup_beta, prob=cfg.mixup_prob)
+        train_dset = LeafDataset.from_leaf_dataset(distilled_dset_2020, train_idxs, transform=None)
+        train_dset = UnionDataSet(train_dset, dset_2019, transform=train_transforms)
         train_dset = CutMix(train_dset, num_class=5, num_mix=cfg.cutmix_num_mix, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
@@ -179,7 +181,7 @@ if __name__ == "__main__":
 
         # Cosine annealing
         reset_initial_lr(leaf_model.optimizer)
-        cos_epochs = 10
+        cos_epochs = cfg.cos_epochs
         leaf_model.scheduler = CosineAnnealingWarmRestarts(leaf_model.optimizer, T_0=cos_epochs*len(train_dataloader)+1, eta_min=final_lr)
         trainer.train_epochs(cos_epochs)
 

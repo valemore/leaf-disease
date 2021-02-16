@@ -39,10 +39,9 @@ def get_params_dict(cfg):
 
 
 class Trainer(object):
-    def __init__(self, leaf_model, train_dataloader, val_dataloader, log_steps, steps_offset=0, epoch=0, neptune=None, fp16=True, grad_norm=None):
+    def __init__(self, leaf_model, train_dataloader, log_steps, steps_offset=0, epoch=0, neptune=None, fp16=True, grad_norm=None):
         self.leaf_model = leaf_model
         self.train_dataloader = train_dataloader
-        self.val_dataloader = val_dataloader
         self.log_steps = log_steps
         self.steps_offset = 0
         self.epoch = 1
@@ -56,11 +55,6 @@ class Trainer(object):
             losses, accs = train_one_epoch(self.leaf_model, self.train_dataloader, log_steps=self.log_steps, epoch_name=epoch_name, steps_offset=self.steps_offset, neptune=self.neptune, grad_norm=self.grad_norm, fp16=self.fp16)
             self.steps_offset += len(self.train_dataloader)
             self.epoch += 1
-            val_loss, val_acc = validate_one_epoch(self.leaf_model, self.val_dataloader)
-            print(f"Validation after step {self.steps_offset}: loss {val_loss}, acc {val_acc}")
-            if self.neptune:
-                neptune.log_metric("loss/val", y=val_loss, x=self.steps_offset)
-                neptune.log_metric("acc/val", y=val_acc, x=self.steps_offset)
             self.leaf_model.save_checkpoint(f"{epoch_name}", epoch_name=f"{epoch_name}")
             if scheduler is not None:
                 if scheduler is not None:
@@ -77,8 +71,8 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "b4 446 hope"
-        model_file: str = "b4-446-distill"
+        description: str = "b4 446 final 10 whole"
+        model_file: str = "b4-446-final10-whole"
         num_classes: int = 5
         img_size: int = 446
         arch: str = "tf_efficientnet_b4_ns"
@@ -86,7 +80,8 @@ if __name__ == "__main__":
         cutmix_prob: float = 0.5
         cutmix_num_mix: int = 1
         cutmix_beta: float = 1.0
-        soft_ratio: float = 0.3
+        soft_ratio: float = 0.5
+        cos_epochs: int = 10
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -134,53 +129,37 @@ if __name__ == "__main__":
         ToTensorV2()
     ])
 
-    dset_2020 = LeafDataset("data/images", "data/images/labels.csv", transform=None)
-    #dset_2019 = LeafDataset("data/2019", "data/2019/labels.csv", transform=None, tiny=debug)
-
-    num_splits = 5
-    folds = get_leaf_splits("./data/images/labels.csv", num_splits, random_seed=5293)
+    train_dset = LeafDataset("data/images", "data/images/labels.csv", transform=train_transforms, tiny=debug)
 
     torch.cuda.empty_cache()
-    for fold, (train_idxs, val_idxs) in enumerate(folds):
-        #if fold != 0:
-        #    continue
-        if debug:
-            train_idxs = train_idxs[:TINY_SIZE]
-            val_idxs = val_idxs[:TINY_SIZE]
+    train_dset = DistillationDataSet(train_dset, "data/images/soft_labels.csv", soft_ratio=cfg.soft_ratio, soft_start_col=2)
+    train_dset = CutMix(train_dset, num_class=5, num_mix=cfg.cutmix_num_mix, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob)
 
-        train_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=train_transforms)
-        # train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
-        train_dset = DistillationDataSet(train_dset, "data/images/soft_labels.csv", soft_ratio=cfg.soft_ratio, soft_start_col=2)
-        # train_dset = Mixup(train_dset, num_class=5, beta=cfg.mixup_beta, prob=cfg.mixup_prob)
-        train_dset = CutMix(train_dset, num_class=5, num_mix=cfg.cutmix_num_mix, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob)
-        val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
+    train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
-        train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-        val_dataloader = LeafDataLoader(val_dset, batch_size=val_batch_size, shuffle=False, num_workers=num_workers)
-
-        model_prefix = f"{cfg.model_file}_fold{fold}.{datetime.now().strftime('%b%d_%H-%M-%S')}"
-        leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
+    model_prefix = f"{cfg.model_file}_whole.{datetime.now().strftime('%b%d_%H-%M-%S')}"
+    leaf_model = LeafModel(cfg, model_prefix=model_prefix, output_dir=output_dir)
 
 
-        neptune.init(project_qualified_name='vmorelli/cassava')
+    neptune.init(project_qualified_name='vmorelli/cassava')
 
-        neptune_tags = []
-        neptune_tags.extend((["gcp"] if on_gcp else []) + (["dbg"] if debug else []))
-        neptune.create_experiment(name=model_prefix, params=get_params_dict(cfg), upload_source_files=['*.py', 'leaf/*.py', 'environment.yml', "*.ipynb"],
-                                  description=cfg.description,
-                                  tags=neptune_tags)
+    neptune_tags = []
+    neptune_tags.extend((["gcp"] if on_gcp else []) + (["dbg"] if debug else []))
+    neptune.create_experiment(name=model_prefix, params=get_params_dict(cfg), upload_source_files=['*.py', 'leaf/*.py', 'environment.yml', "*.ipynb"],
+                                description=cfg.description,
+                                tags=neptune_tags)
 
-        trainer = Trainer(leaf_model, train_dataloader, val_dataloader, log_steps, neptune=neptune, fp16=use_fp16, grad_norm=grad_norm)
+    trainer = Trainer(leaf_model, train_dataloader, log_steps, neptune=neptune, fp16=use_fp16, grad_norm=grad_norm)
 
-        # Warmup
-        leaf_model.optimizer = Adam(leaf_model.model.parameters(), lr=start_lr, weight_decay=weight_decay)
-        leaf_model.scheduler = LinearLR(leaf_model.optimizer, start_lr, max_lr, len(train_dataloader))
-        trainer.train_epochs(1)
+    # Warmup
+    leaf_model.optimizer = Adam(leaf_model.model.parameters(), lr=start_lr, weight_decay=weight_decay)
+    leaf_model.scheduler = LinearLR(leaf_model.optimizer, start_lr, max_lr, len(train_dataloader))
+    trainer.train_epochs(1)
 
-        # Cosine annealing
-        reset_initial_lr(leaf_model.optimizer)
-        cos_epochs = 10
-        leaf_model.scheduler = CosineAnnealingWarmRestarts(leaf_model.optimizer, T_0=cos_epochs*len(train_dataloader)+1, eta_min=final_lr)
-        trainer.train_epochs(cos_epochs)
+    # Cosine annealing
+    reset_initial_lr(leaf_model.optimizer)
+    cos_epochs = cfg.cos_epochs
+    leaf_model.scheduler = CosineAnnealingWarmRestarts(leaf_model.optimizer, T_0=cos_epochs*len(train_dataloader)+1, eta_min=final_lr)
+    trainer.train_epochs(cos_epochs)
 
-        neptune.stop()
+    neptune.stop()

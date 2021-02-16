@@ -111,22 +111,21 @@ class LeafDataLoader(DataLoader):
 
 
 class DistillationDataSet(Dataset):
-    def __init__(self, dset, soft_targets_csv, soft_ratio=0.3, soft_start_col=2, transform=None):
+    def __init__(self, dset, soft_targets_csv, soft_ratio=0.3, soft_start_col=2):
         self.dset = dset
-        df = pd.read_csv(soft_targets_csv)
-        self.soft_labels = df.iloc[:, soft_start_col:].values
+        
+        
         self.soft_ratio = soft_ratio
 
         self.img_dir = dset.img_dir
-        self.fnames = dset.fnames
-        self.hard_labels = dset.labels
-        self.dataset_len = len(self.dset)
 
-        if self.dset.tiny:
-            self.soft_labels = self.soft_labels[:len(self.dset), :]
-
-        assert len(self.soft_labels) == len(self.fnames)
-        assert all(df["image_id"].values == self.dset.fnames)
+        hard_df = pd.DataFrame({"image_id": dset.fnames, "label": dset.labels})
+        soft_df = pd.read_csv(soft_targets_csv)
+        soft_df = hard_df.merge(soft_df.iloc[:, [0] + list(range(soft_start_col, soft_df.shape[1]))], on="image_id").reset_index(drop=True)
+        self.soft_labels = soft_df.iloc[:, 2:].values
+        self.hard_labels = soft_df["label"].values
+        self.fnames = soft_df["image_id"].values
+        self.dataset_len = len(self.fnames)
 
         hard_labels_oh = np.zeros((len(self.hard_labels), NUM_CLASSES))
         for i, l in enumerate(self.hard_labels):
@@ -134,7 +133,8 @@ class DistillationDataSet(Dataset):
 
         self.labels = (1 - self.soft_ratio) * hard_labels_oh + self.soft_ratio * self.soft_labels
 
-        self.transform = transform
+        self.transform = dset.transform
+
         self.tiny = self.dset.tiny
 
     def __len__(self):

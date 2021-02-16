@@ -77,8 +77,8 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "b4 446 hope"
-        model_file: str = "b4-446-distill"
+        description: str = "WTF"
+        model_file: str = "WTF"
         num_classes: int = 5
         img_size: int = 446
         arch: str = "tf_efficientnet_b4_ns"

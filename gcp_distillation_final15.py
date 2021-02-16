@@ -77,8 +77,8 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "b4 446 hope"
-        model_file: str = "b4-446-distill"
+        description: str = "b4 446 final 15"
+        model_file: str = "b4-446-final15"
         num_classes: int = 5
         img_size: int = 446
         arch: str = "tf_efficientnet_b4_ns"
@@ -86,7 +86,8 @@ if __name__ == "__main__":
         cutmix_prob: float = 0.5
         cutmix_num_mix: int = 1
         cutmix_beta: float = 1.0
-        soft_ratio: float = 0.3
+        soft_ratio: float = 0.5
+        cos_epochs: int = 15
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -179,7 +180,7 @@ if __name__ == "__main__":
 
         # Cosine annealing
         reset_initial_lr(leaf_model.optimizer)
-        cos_epochs = 10
+        cos_epochs = cfg.cos_epochs
         leaf_model.scheduler = CosineAnnealingWarmRestarts(leaf_model.optimizer, T_0=cos_epochs*len(train_dataloader)+1, eta_min=final_lr)
         trainer.train_epochs(cos_epochs)
 

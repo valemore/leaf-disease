@@ -77,8 +77,8 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "b4 446 hope"
-        model_file: str = "b4-446-distill"
+        description: str = "b4 446 hope 0.4 long"
+        model_file: str = "b4-446-distill4L"
         num_classes: int = 5
         img_size: int = 446
         arch: str = "tf_efficientnet_b4_ns"
@@ -179,7 +179,7 @@ if __name__ == "__main__":
 
         # Cosine annealing
         reset_initial_lr(leaf_model.optimizer)
-        cos_epochs = 10
+        cos_epochs = 15
         leaf_model.scheduler = CosineAnnealingWarmRestarts(leaf_model.optimizer, T_0=cos_epochs*len(train_dataloader)+1, eta_min=final_lr)
         trainer.train_epochs(cos_epochs)
 
