@@ -111,10 +111,10 @@ class LeafDataLoader(DataLoader):
 
 
 class DistillationDataSet(Dataset):
-    def __init__(self, dset, soft_targets_csv, soft_ratio=0.3):
+    def __init__(self, dset, soft_targets_csv, soft_ratio=0.3, soft_start_col=2, transform=None):
         self.dset = dset
         df = pd.read_csv(soft_targets_csv)
-        self.soft_labels = df.iloc[:, 2:].values
+        self.soft_labels = df.iloc[:, soft_start_col:].values
         self.soft_ratio = soft_ratio
 
         self.img_dir = dset.img_dir
@@ -126,6 +126,7 @@ class DistillationDataSet(Dataset):
             self.soft_labels = self.soft_labels[:len(self.dset), :]
 
         assert len(self.soft_labels) == len(self.fnames)
+        assert all(df["image_id"].values == self.dset.fnames)
 
         hard_labels_oh = np.zeros((len(self.hard_labels), NUM_CLASSES))
         for i, l in enumerate(self.hard_labels):
@@ -133,13 +134,16 @@ class DistillationDataSet(Dataset):
 
         self.labels = (1 - self.soft_ratio) * hard_labels_oh + self.soft_ratio * self.soft_labels
 
-        self.transform = None
+        self.transform = transform
         self.tiny = self.dset.tiny
 
     def __len__(self):
         return self.dataset_len
 
     def __getitem__(self, idx):
-        img, _, idx = self.dset[idx]
+        img = cv2.imread(str(self.img_dir / self.fnames[idx]))
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        if self.transform:
+            img = self.transform(image=img)["image"]
         label = self.labels[idx]
         return img, label, idx

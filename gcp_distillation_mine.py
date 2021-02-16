@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch.optim import SGD, Adam
 
-from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet, TINY_SIZE
+from leaf.dta import LeafDataset, LeafDataLoader, get_leaf_splits, UnionDataSet, TINY_SIZE, DistillationDataSet
 from leaf.model import LeafModel, train_one_epoch, validate_one_epoch
 from leaf.sched import get_warmup_scheduler, LinearLR, fix_optimizer, reset_initial_lr, get_one_cycle
 from leaf.cutmix import CutMix
@@ -77,16 +77,16 @@ if __name__ == "__main__":
 
     @dataclass
     class CFG:
-        description: str = "resnext101_32x4d"
-        model_file: str = "resnext101_32x4d"
+        description: str = "b4 446 hope"
+        model_file: str = "b4-446-distill"
         num_classes: int = 5
-        img_size: int = 380
-        arch: str = "resnext101_32x8d"
-        loss_fn: str = "CrossEntropyLoss"
+        img_size: int = 446
+        arch: str = "tf_efficientnet_b4_ns"
+        loss_fn: str = "CutMixCrossEntropyLoss"
         cutmix_prob: float = 0.5
         cutmix_num_mix: int = 1
         cutmix_beta: float = 1.0
-        # from_checkpoint: str = "/mnt/hdd/leaf-disease-outputs/selection/local/cas-33/b4-cutmix-11.pth"
+        soft_ratio: float = 0.3
 
         def __repr__(self):
             return json.dumps(self.__dict__)
@@ -95,8 +95,8 @@ if __name__ == "__main__":
     num_workers = 4
     use_fp16 = True
 
-    batch_size = 32
-    val_batch_size = 64
+    batch_size = 30
+    val_batch_size = 60
 
     debug = False
     if debug:
@@ -105,10 +105,10 @@ if __name__ == "__main__":
 
     log_steps = 50
 
-    max_lr = 2e-4
-    start_lr = 5e-7
-    # mid_lr = 1.5e-4
-    final_lr = 5e-7
+    max_lr = 1e-3
+    start_lr = 1e-7
+    # mid_lr = 1e-3
+    final_lr = 1e-7
 
     weight_decay = 0.0
 
@@ -134,24 +134,25 @@ if __name__ == "__main__":
         ToTensorV2()
     ])
 
-    dset_2020 = LeafDataset("data/images", "data/images/labels.csv", transform=None)
-    dset_2019 = LeafDataset("data/2019", "data/2019/labels.csv", transform=None, tiny=debug)
+    dset_2020 = LeafDataset("data/images", "data/images/sorted_labels.csv", transform=None)
+    distilled_dset = DistillationDataSet(dset_2020, "./data/images/sorted_soft_labels.csv", soft_ratio=cfg.soft_ratio, transform=None)
+    #dset_2019 = LeafDataset("data/2019", "data/2019/labels.csv", transform=None, tiny=debug)
 
     num_splits = 5
-    folds = get_leaf_splits("./data/images/labels.csv", num_splits, random_seed=5293)
+    folds = get_leaf_splits("./data/images/sorted_labels.csv", num_splits, random_seed=5293)
 
     torch.cuda.empty_cache()
     for fold, (train_idxs, val_idxs) in enumerate(folds):
-        if fold != 0:
-            continue
+        #if fold != 0:
+        #    continue
         if debug:
             train_idxs = train_idxs[:TINY_SIZE]
             val_idxs = val_idxs[:TINY_SIZE]
 
-        fold_dset = LeafDataset.from_leaf_dataset(dset_2020, train_idxs, transform=None)
-        train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
+        train_dset = LeafDataset.from_leaf_dataset(distilled_dset, train_idxs, transform=train_transforms)
+        # train_dset = UnionDataSet(fold_dset, dset_2019, transform=train_transforms)
         # train_dset = Mixup(train_dset, num_class=5, beta=cfg.mixup_beta, prob=cfg.mixup_prob)
-        # train_dset = CutMix(train_dset, num_class=5, num_mix=cfg.cutmix_num_mix, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob)
+        train_dset = CutMix(train_dset, num_class=5, num_mix=cfg.cutmix_num_mix, beta=cfg.cutmix_beta, prob=cfg.cutmix_prob)
         val_dset = LeafDataset.from_leaf_dataset(dset_2020, val_idxs, transform=val_transforms)
 
         train_dataloader = LeafDataLoader(train_dset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
@@ -181,12 +182,5 @@ if __name__ == "__main__":
         cos_epochs = 10
         leaf_model.scheduler = CosineAnnealingWarmRestarts(leaf_model.optimizer, T_0=cos_epochs*len(train_dataloader)+1, eta_min=final_lr)
         trainer.train_epochs(cos_epochs)
-
-        # Continue without scheduler
-        # leaf_model.scheduler = None
-        # reset_initial_lr(leaf_model.optimizer)
-        # final_scheduler = ReduceLROnPlateau(leaf_model.optimizer, mode='min', patience=1)
-        #
-        # trainer.train_epochs(10, final_scheduler)
 
         neptune.stop()

@@ -8,7 +8,7 @@ from leaf.dta import UnionDataSet
 
 
 def len_robust(x):
-    if hasattr(x, "len"):
+    if hasattr(x, "__len__"):
         return len(x)
     else:
         return 1
