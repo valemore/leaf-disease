@@ -1,1 +1,0 @@
-- How to reliably get input size?
